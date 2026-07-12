@@ -1,0 +1,9 @@
+{
+  "name": "word-spirit-planet",
+  "version": "0.2.0",
+  "private": true,
+  "description": "《词灵星球：英语单词消消乐》试玩版",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
