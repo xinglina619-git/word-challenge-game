@@ -2,12 +2,13 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { SessionStore } = require('./session-store');
 
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, 'data');
+const DATA_DIR = process.env.WORD_SPIRIT_DATA_DIR || path.join(ROOT, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'users.json');
-const sessions = new Map();
+const sessionStore = new SessionStore(path.join(DATA_DIR, 'sessions.json'));
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [] }, null, 2));
@@ -18,7 +19,6 @@ function readDb() {
 }
 function saveDb(db) { fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2)); }
 function hash(password, salt) { return crypto.scryptSync(password, salt, 64).toString('hex'); }
-function token() { return crypto.randomBytes(32).toString('hex'); }
 function send(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(body));
@@ -61,17 +61,12 @@ function publicUser(user) {
   return { ...safe, progress: normalizeProgress(safe.progress), phoneTail: phone.slice(-4) };
 }
 function requireUser(req) {
-  const auth = req.headers.authorization || '';
-  const session = sessions.get(auth.replace('Bearer ', ''));
-  if (!session || session.expiresAt < Date.now()) return null;
-  const db = readDb();
-  return db.users.find(user => user.id === session.userId) || null;
+  const rawToken = (req.headers.authorization || '').replace('Bearer ', '');
+  const session = sessionStore.get(rawToken);
+  if (!session) return null;
+  return readDb().users.find(user => user.id === session.userId) || null;
 }
-function createSession(userId) {
-  const value = token();
-  sessions.set(value, { userId, expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000 });
-  return value;
-}
+function createSession(userId) { return sessionStore.create(userId); }
 function profileFrom(body, current = {}) {
   const nickname = String(body.nickname ?? current.nickname ?? '').trim().slice(0, 12);
   const avatar = String(body.avatar ?? current.avatar ?? 'boy_hat');
@@ -169,7 +164,10 @@ const server = http.createServer(async (req, res) => {
         currentRank: ranked.find(item => item.id === user.id)?.rank || ranked.length
       });
     }
-    if (req.method === 'POST' && url.pathname === '/api/logout') { sessions.delete((req.headers.authorization || '').replace('Bearer ', '')); return send(res, 200, { ok: true }); }
+    if (req.method === 'POST' && url.pathname === '/api/logout') {
+      sessionStore.delete((req.headers.authorization || '').replace('Bearer ', ''));
+      return send(res, 200, { ok: true });
+    }
     if (req.method === 'GET' && url.pathname === '/') return serveFile(res, path.join(ROOT, 'index.html'));
     if (req.method === 'GET' && ['/.js', '/app.js'].includes(url.pathname)) return serveFile(res, path.join(ROOT, 'app.js'));
     if (req.method === 'GET' && url.pathname === '/textbook-words.generated.js') return serveFile(res, path.join(ROOT, 'textbook-words.generated.js'));
