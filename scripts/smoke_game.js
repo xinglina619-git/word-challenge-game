@@ -26,7 +26,7 @@ vm.runInContext(fs.readFileSync(path.join(root, 'textbook-words.generated.js'), 
 vm.runInContext(fs.readFileSync(path.join(root, 'curriculum.js'), 'utf8'), context, { filename: 'curriculum.js' });
 const source = `${fs.readFileSync(path.join(root, 'app.js'), 'utf8')}
 globalThis.__gameTest = {
-  newGame, findMatchLines, possibleMoves, expandedRemoval, gradeFor, wordsForLevel,
+  newGame, findMatchLines, possibleMoves, expandedRemoval, gradeFor, wordsForLevel, adjacent, swap,
   modeForLevel, missionForLevel, praiseForEffect, visualForWord, memoryInline,
   visualForPairWord: typeof visualForPairWord === 'function' ? visualForPairWord : null,
   spiritMusicThemes: typeof SPIRIT_MUSIC_THEMES === 'undefined' ? null : SPIRIT_MUSIC_THEMES,
@@ -41,7 +41,8 @@ globalThis.__gameTest = {
   resetPasswordView: typeof resetPasswordView === 'function' ? resetPasswordView : null,
   readAudioSettings: typeof readAudioSettings === 'function' ? readAudioSettings : null,
   audioIcon: typeof audioIcon === 'function' ? audioIcon : null,
-  audioSettingsPanel: typeof audioSettingsPanel === 'function' ? audioSettingsPanel : null
+  audioSettingsPanel: typeof audioSettingsPanel === 'function' ? audioSettingsPanel : null,
+  tutorialForGame: typeof tutorialForGame === 'function' ? tutorialForGame : null
 };`;
 vm.runInContext(source, context, { filename: 'app.js' });
 
@@ -61,6 +62,14 @@ if (JSON.stringify(audioSettings) !== JSON.stringify({ music: false, effects: tr
 if (test.audioIcon({ music: false, effects: false, speech: false }) !== '静音') throw new Error('全静音状态不明确');
 const audioPanel = test.audioSettingsPanel();
 if (!audioPanel.includes('背景音乐') || !audioPanel.includes('游戏音效') || !audioPanel.includes('单词朗读')) throw new Error('声音设置面板缺少通道');
+if (!test.tutorialForGame) throw new Error('首次玩法教学缺失');
+const tutorialGame = test.newGame(1);
+const tutorial = test.tutorialForGame(tutorialGame, { tutorials: { match3: false, pair: false } });
+if (!tutorial.active || tutorial.mode !== 'match3' || tutorial.cells.length !== 2) throw new Error('三消教学内容无效');
+if (!test.adjacent(tutorial.cells[0], tutorial.cells[1])) throw new Error('三消教学没有使用相邻词块');
+if (!test.findMatchLines(test.swap(tutorialGame.board, tutorial.cells[0], tutorial.cells[1])).length) throw new Error('三消教学没有使用真实可行移动');
+const pairTutorial = test.tutorialForGame(test.newGame(3), { tutorials: { match3: true, pair: false } });
+if (!pairTutorial.active || pairTutorial.mode !== 'pair' || pairTutorial.cells.length !== 2) throw new Error('配对教学内容无效');
 const spiritIds = ['lingling', 'sprout', 'bubble', 'candy', 'spark', 'cloud', 'moon', 'rainbow'];
 if (!test.spiritMusicThemes || !test.musicThemeForSpirit) throw new Error('Spirit music themes are not configured');
 const themeSignatures = spiritIds.map(id => {

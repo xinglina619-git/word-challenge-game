@@ -53,6 +53,10 @@ function normalizeProgress(progress = {}) {
       hint: Math.max(0, Math.min(999, Number(progress.inventory?.hint ?? 3))),
       shuffle: Math.max(0, Math.min(999, Number(progress.inventory?.shuffle ?? 2))),
       addMoves: Math.max(0, Math.min(999, Number(progress.inventory?.addMoves ?? 1)))
+    },
+    tutorials: {
+      match3: Boolean(progress.tutorials?.match3),
+      pair: Boolean(progress.tutorials?.pair)
     }
   };
 }

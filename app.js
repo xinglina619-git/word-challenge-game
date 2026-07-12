@@ -218,6 +218,10 @@ function normalizedProgress() {
   p.spirits.lingling ||= 1;
   p.equipped = p.spirits[p.equipped] ? p.equipped : 'lingling';
   p.inventory = { hint: 3, shuffle: 2, addMoves: 1, ...(p.inventory || {}) };
+  p.tutorials = {
+    match3: Boolean(p.tutorials?.match3),
+    pair: Boolean(p.tutorials?.pair)
+  };
   p.draws = Math.max(0, Number(p.draws || 0));
   p.pity = Math.max(0, Number(p.pity || 0));
   p.bestCombo = Math.max(0, Number(p.bestCombo || 0));
@@ -584,6 +588,19 @@ function possibleMoves(board) {
   }
   return moves;
 }
+function tutorialForGame(game, progress) {
+  const mode = game.mode;
+  if (progress.tutorials?.[mode]) return { active: false, mode, cells: [], step: 0 };
+  if (mode === 'match3') {
+    const move = possibleMoves(game.board)[0];
+    return { active: Boolean(move), mode, cells: move ? [move.a, move.b] : [], step: 0 };
+  }
+  const first = game.pairs.findIndex(card => !card.matched);
+  const second = game.pairs.findIndex((card, index) => (
+    index !== first && !card.matched && card.type === game.pairs[first]?.type && card.lang !== game.pairs[first]?.lang
+  ));
+  return { active: first >= 0 && second >= 0, mode, cells: first >= 0 && second >= 0 ? [first, second] : [], step: 0 };
+}
 function makeBoard(wordCount) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const board = [];
@@ -643,10 +660,26 @@ function newGame(level) {
     meaningFlash: null,
     memoryWords: [],
     praise: '',
+    tutorial: null,
     message: mode === 'match3' ? '自由寻找三连，达到目标积分即可通关' : '点击中文和对应英文，完成配对'
   };
   if (mode === 'pair') game.target = words[0];
   return game;
+}
+function completeTutorial(game) {
+  if (!game?.tutorial?.active) return;
+  const progress = normalizedProgress();
+  progress.tutorials[game.mode] = true;
+  game.tutorial = { ...game.tutorial, active: false };
+  persistProgress().catch(() => {});
+}
+function tutorialLayer(game) {
+  if (!game.tutorial?.active) return '';
+  const firstStep = game.tutorial.step === 0;
+  const text = game.mode === 'match3'
+    ? firstStep ? '先点发光词块' : '再点旁边发光词块，交换成三个相同单词'
+    : firstStep ? '先点发光的词牌' : '再找它发光的中英搭档';
+  return `<div class="tutorial-layer"><div class="tutorial-card"><small>第一次玩 · ${firstStep ? '第 1 步' : '第 2 步'}</small><b>${text}</b><button data-action="complete-tutorial">我会了</button></div></div>`;
 }
 function collapseBoard(game, removed) {
   const board = [...game.board];
@@ -779,7 +812,13 @@ async function selectCell(index) {
   const game = state.game;
   if (!game || game.mode !== 'match3' || game.busy) return;
   if (game.selected == null) {
+    if (game.tutorial?.active && index !== game.tutorial.cells[0]) {
+      game.message = '先点发光的词块，我会陪你完成第一步';
+      render();
+      return;
+    }
     game.selected = index;
+    if (game.tutorial?.active) game.tutorial.step = 1;
     render();
     return;
   }
@@ -789,7 +828,17 @@ async function selectCell(index) {
     return;
   }
   if (!adjacent(game.selected, index)) {
+    if (game.tutorial?.active) {
+      game.message = '再点旁边发光的词块';
+      render();
+      return;
+    }
     game.selected = index;
+    render();
+    return;
+  }
+  if (game.tutorial?.active && index !== game.tutorial.cells[1]) {
+    game.message = '再点旁边发光的词块';
     render();
     return;
   }
@@ -804,7 +853,9 @@ async function selectCell(index) {
   if (!lines.length) {
     game.board = swap(game.board, a, b);
     game.combo = 0;
-    game.message = '这一步没有形成三连，再试一次';
+    game.message = '这两个相邻词块还不能组成三连，看看发光提示';
+    const suggested = possibleMoves(game.board)[0];
+    game.hintCells = suggested ? [suggested.a, suggested.b] : [];
     game.effect = 'shake';
     soundWrong();
     game.busy = false;
@@ -813,6 +864,7 @@ async function selectCell(index) {
     return;
   }
 
+  completeTutorial(game);
   game.moves -= 1;
   const matchedTypes = new Set(lines.map(line => game.board[line[0]]));
   const expanded = expandedRemoval(lines, game.board);
@@ -850,13 +902,24 @@ async function selectPair(index) {
   const card = game.pairs[index];
   if (!card || card.matched) return;
   if (game.selected == null) {
+    if (game.tutorial?.active && index !== game.tutorial.cells[0]) {
+      game.message = '先点发光的词牌';
+      render();
+      return;
+    }
     game.selected = index;
+    if (game.tutorial?.active) game.tutorial.step = 1;
     if (card.lang === 'en') speakWord(card.text);
     render();
     return;
   }
   if (game.selected === index) {
     game.selected = null;
+    render();
+    return;
+  }
+  if (game.tutorial?.active && index !== game.tutorial.cells[1]) {
+    game.message = '再点发光的中英搭档';
     render();
     return;
   }
@@ -867,6 +930,7 @@ async function selectPair(index) {
   game.moves -= 1;
   const correct = first.type === card.type && first.lang !== card.lang;
   if (correct) {
+    completeTutorial(game);
     first.matched = true;
     card.matched = true;
     game.done += 1;
@@ -1144,12 +1208,12 @@ function gameView() {
     <section class="${game.mode === 'match3' ? 'board' : 'pair-board'} ${game.effect}" style="--types:${game.words.length}">
       ${game.mode === 'match3' ? game.board.map((type, index) => {
         const word = game.words[type];
-        return `<button class="tile type-${type} ${game.selected === index ? 'selected' : ''} ${game.hintCells.includes(index) ? 'hint' : ''} ${game.exploding.includes(index) ? 'exploding' : ''}" data-cell="${index}" ${game.busy ? 'disabled' : ''}><span>${esc(word.word)}</span><small>${word.icon || '✦'}</small></button>`;
-      }).join('') : game.pairs.map((card, index) => `<button class="pair-card ${card.lang} type-${card.type} ${game.selected === index ? 'selected' : ''} ${game.hintCells.includes(index) ? 'hint' : ''} ${card.matched ? 'matched' : ''} ${game.exploding.includes(index) ? 'exploding' : ''}" data-pair="${index}" aria-label="${esc(card.text)}" ${game.busy || card.matched ? 'disabled' : ''}>${pairFace(card, game.words[card.type])}</button>`).join('')}
+        return `<button class="tile type-${type} ${game.selected === index ? 'selected' : ''} ${game.hintCells.includes(index) ? 'hint' : ''} ${game.tutorial?.active && game.tutorial.cells.includes(index) ? 'tutorial-focus' : ''} ${game.exploding.includes(index) ? 'exploding' : ''}" data-cell="${index}" ${game.busy ? 'disabled' : ''}><span>${esc(word.word)}</span><small>${word.icon || '✦'}</small></button>`;
+      }).join('') : game.pairs.map((card, index) => `<button class="pair-card ${card.lang} type-${card.type} ${game.selected === index ? 'selected' : ''} ${game.hintCells.includes(index) ? 'hint' : ''} ${game.tutorial?.active && game.tutorial.cells.includes(index) ? 'tutorial-focus' : ''} ${card.matched ? 'matched' : ''} ${game.exploding.includes(index) ? 'exploding' : ''}" data-pair="${index}" aria-label="${esc(card.text)}" ${game.busy || card.matched ? 'disabled' : ''}>${pairFace(card, game.words[card.type])}</button>`).join('')}
       ${effectLayer(game)}
       ${game.meaningFlash ? `<div class="meaning-pop ${game.meaningFlash.cascade ? 'cascade-word' : ''} ${game.meaningFlash.flying ? 'flying' : ''}"><small>${game.meaningFlash.cascade ? '连锁学习' : '本次消除'}</small>${game.meaningFlash.words.map(word => `<div><b>${esc(word.word)}</b><span>${esc(word.zh)}</span></div>`).join('')}</div>` : ''}
       ${game.effect === 'coin-burst' ? '<div class="coin-explosion"><b>五星连捷！</b><span>🪙 +15</span></div>' : ''}
-    </section>
+    </section>${tutorialLayer(game)}
     <div class="tools">
       <button data-action="hint"><b>💡 ${p.inventory.hint}</b><span>提示</span></button>
       <button data-action="shuffle"><b>🔀 ${p.inventory.shuffle}</b><span>${game.mode === 'match3' ? '重排' : '重新摆放'}</span></button>
@@ -1304,6 +1368,7 @@ async function drawCard() {
 }
 function startLevel(level) {
   state.game = newGame(Math.max(1, Math.min(100, level)));
+  state.game.tutorial = tutorialForGame(state.game, normalizedProgress());
   state.result = null;
   state.view = 'intro';
   render();
@@ -1388,6 +1453,15 @@ document.addEventListener('click', async event => {
   if (action === 'audio-settings') { state.audioPanel = true; render(); }
   if (action === 'close-audio-settings') { state.audioPanel = false; render(); }
   if (action === 'toggle-audio') toggleAudioChannel(event.target.closest('[data-audio]')?.dataset.audio);
+  if (action === 'complete-tutorial') { completeTutorial(state.game); render(); }
+  if (action === 'play-help') {
+    state.audioPanel = false;
+    if (state.game) {
+      state.game.tutorial = tutorialForGame(state.game, { tutorials: { [state.game.mode]: false } });
+      state.view = 'game';
+      render();
+    } else toast('进入任意关卡后，可以跟着发光提示练习玩法');
+  }
   if (action === 'speak') speakWord(state.game.target.word);
   if (action === 'pair-rule') toast('先点中文或英文，再点它的正确搭档');
   if (action === 'hint') useHint();
