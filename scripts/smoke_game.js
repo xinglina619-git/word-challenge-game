@@ -38,7 +38,10 @@ globalThis.__gameTest = {
   createPraiseUtterance: typeof createPraiseUtterance === 'function' ? createPraiseUtterance : null,
   gameState: state,
   authView: typeof authView === 'function' ? authView : null,
-  resetPasswordView: typeof resetPasswordView === 'function' ? resetPasswordView : null
+  resetPasswordView: typeof resetPasswordView === 'function' ? resetPasswordView : null,
+  readAudioSettings: typeof readAudioSettings === 'function' ? readAudioSettings : null,
+  audioIcon: typeof audioIcon === 'function' ? audioIcon : null,
+  audioSettingsPanel: typeof audioSettingsPanel === 'function' ? audioSettingsPanel : null
 };`;
 vm.runInContext(source, context, { filename: 'app.js' });
 
@@ -50,6 +53,14 @@ if (!test.authView().includes('data-action="toggle-password"')) throw new Error(
 if (!test.authView().includes('data-action="forgot-password"')) throw new Error('登录页缺少密码恢复入口');
 if (!test.resetPasswordView().includes('autocomplete="new-password"')) throw new Error('新密码缺少自动填充语义');
 if (!test.resetPasswordView().includes('id="reset-password-form"')) throw new Error('密码恢复表单缺失');
+if (!test.readAudioSettings || !test.audioIcon || !test.audioSettingsPanel) throw new Error('声音设置接口不完整');
+const audioSettings = test.readAudioSettings({
+  getItem: key => ({ word_spirit_music: 'off', word_spirit_effects: 'on', word_spirit_speech: 'off' })[key]
+});
+if (JSON.stringify(audioSettings) !== JSON.stringify({ music: false, effects: true, speech: false })) throw new Error('声音通道读取不正确');
+if (test.audioIcon({ music: false, effects: false, speech: false }) !== '静音') throw new Error('全静音状态不明确');
+const audioPanel = test.audioSettingsPanel();
+if (!audioPanel.includes('背景音乐') || !audioPanel.includes('游戏音效') || !audioPanel.includes('单词朗读')) throw new Error('声音设置面板缺少通道');
 const spiritIds = ['lingling', 'sprout', 'bubble', 'candy', 'spark', 'cloud', 'moon', 'rainbow'];
 if (!test.spiritMusicThemes || !test.musicThemeForSpirit) throw new Error('Spirit music themes are not configured');
 const themeSignatures = spiritIds.map(id => {

@@ -144,6 +144,20 @@ const TIPS = [
   '没有可消除组合时，棋盘会自动重新排列。'
 ];
 
+function readAudioSettings(storage = localStorage) {
+  const enabled = key => storage.getItem(key) !== 'off';
+  return {
+    music: enabled('word_spirit_music'),
+    effects: enabled('word_spirit_effects'),
+    speech: enabled('word_spirit_speech')
+  };
+}
+
+function audioIcon(audio) {
+  if (!audio.music && !audio.effects && !audio.speech) return '静音';
+  return '声音';
+}
+
 const state = {
   token: localStorage.getItem('word_spirit_token') || localStorage.getItem('general_token'),
   user: null,
@@ -158,7 +172,8 @@ const state = {
   auth: { busy: false, error: '', passwordVisible: false },
   tip: Math.floor(Math.random() * TIPS.length),
   tipTimer: null,
-  music: localStorage.getItem('word_spirit_music') !== 'off'
+  audio: readAudioSettings(),
+  audioPanel: false
 };
 
 const app = document.querySelector('#app');
@@ -222,6 +237,7 @@ function toast(message) {
 }
 
 function tone(frequency, start = 0, duration = .12, type = 'sine', volume = .05) {
+  if (!state.audio.effects) return;
   try {
     audioContext ||= new AudioContext();
     audioContext.resume();
@@ -239,6 +255,7 @@ function tone(frequency, start = 0, duration = .12, type = 'sine', volume = .05)
   } catch {}
 }
 function noise(start = 0, duration = .08, volume = .025) {
+  if (!state.audio.effects) return;
   try {
     audioContext ||= new AudioContext();
     const buffer = audioContext.createBuffer(1, Math.floor(audioContext.sampleRate * duration), audioContext.sampleRate);
@@ -334,7 +351,7 @@ function clearScheduledBgm() {
   bgmNodes.clear();
 }
 function scheduleMusic(themeId = currentMusicThemeId) {
-  if (!state.music) return;
+  if (!state.audio.music) return;
   const theme = musicThemeForSpirit(themeId);
   const beat = theme.beat;
   const leadVolume = theme.wave === 'sawtooth' ? .012 : .019;
@@ -354,7 +371,7 @@ function stopMusic() {
 }
 function startMusic(themeId = activeSpirit().id) {
   const nextThemeId = SPIRIT_MUSIC_THEMES[themeId] ? themeId : 'lingling';
-  if (!state.music) {
+  if (!state.audio.music) {
     currentMusicThemeId = nextThemeId;
     return;
   }
@@ -367,14 +384,21 @@ function startMusic(themeId = activeSpirit().id) {
 }
 function restartMusicForSpirit(id) {
   const nextThemeId = SPIRIT_MUSIC_THEMES[id] ? id : 'lingling';
-  if (state.music) startMusic(nextThemeId);
+  if (state.audio.music) startMusic(nextThemeId);
   else currentMusicThemeId = nextThemeId;
 }
-function toggleMusic() {
-  state.music = !state.music;
-  localStorage.setItem('word_spirit_music', state.music ? 'on' : 'off');
-  if (state.music) startMusic(activeSpirit().id); else stopMusic();
+function toggleAudioChannel(channel) {
+  if (!['music', 'effects', 'speech'].includes(channel)) return;
+  state.audio[channel] = !state.audio[channel];
+  localStorage.setItem(`word_spirit_${channel}`, state.audio[channel] ? 'on' : 'off');
+  if (channel === 'music') {
+    if (state.audio.music) startMusic(activeSpirit().id); else stopMusic();
+  }
   render();
+}
+function audioSettingsPanel() {
+  const row = (channel, icon, label, note = '') => `<button class="audio-channel ${state.audio[channel] ? 'on' : 'off'}" data-action="toggle-audio" data-audio="${channel}" aria-pressed="${state.audio[channel]}"><span>${icon}</span><b>${label}</b><em>${state.audio[channel] ? '已开启' : '已关闭'}</em>${note ? `<small>${note}</small>` : ''}</button>`;
+  return `<div class="modal-backdrop audio-backdrop"><section class="audio-panel" role="dialog" aria-modal="true" aria-label="声音设置"><div class="audio-panel-head"><div><small>学习环境</small><h2>声音设置</h2></div><button class="close" data-action="close-audio-settings" aria-label="关闭声音设置">×</button></div>${row('music', '🎵', '背景音乐')}${row('effects', '✨', '游戏音效')}${row('speech', '🔊', '单词朗读', '建议保留，帮助学习发音')}<button class="audio-help" data-action="play-help">查看玩法帮助</button></section></div>`;
 }
 let lastLearningVoiceURI = '';
 let cachedSystemVoices = [];
@@ -435,7 +459,7 @@ function soundPraiseCue(praise) {
   }
 }
 async function speakPraiseFallback(praise) {
-  if (!('speechSynthesis' in window)) return;
+  if (!state.audio.speech || !('speechSynthesis' in window)) return;
   await waitForSystemVoices();
   const line = createPraiseUtterance(praise, lastLearningVoiceURI);
   window.speechSynthesis.speak(line);
@@ -448,7 +472,7 @@ if ('speechSynthesis' in window) {
   });
 }
 async function speakWord(word) {
-  if (!('speechSynthesis' in window)) return;
+  if (!state.audio.speech || !('speechSynthesis' in window)) return;
   await waitForSystemVoices();
   const line = createLearningUtterance(word);
   lastLearningVoiceURI = line.voice?.voiceURI || '';
@@ -706,7 +730,7 @@ function recordMastered(word) {
   }
 }
 async function speakWords(words) {
-  if (!('speechSynthesis' in window) || !words.length) return;
+  if (!state.audio.speech || !('speechSynthesis' in window) || !words.length) return;
   await waitForSystemVoices();
   window.speechSynthesis.cancel();
   words.slice(0, 3).forEach((word, index) => {
@@ -959,7 +983,7 @@ function shell(content, active = 'home') {
   return `<div class="app-shell">
     <header class="topbar">
       <button class="brand" data-action="home">${spiritFigure('brand-spirit')}<span><b>词灵星球</b><small>英语单词消消乐</small></span></button>
-      <div class="top-actions"><button class="music" data-action="music">${state.music ? '♫' : '♪×'}</button><span>🎟 ${p.tickets}</span><span>🪙 ${p.coins}</span><button class="profile" data-action="profile">${esc(state.user.profile.nickname)}</button></div>
+      <div class="top-actions"><button class="audio-settings-button" data-action="audio-settings" aria-label="声音设置">🔊<span>${audioIcon(state.audio)}</span></button><span>🎟 ${p.tickets}</span><span>🪙 ${p.coins}</span><button class="profile" data-action="profile">${esc(state.user.profile.nickname)}</button></div>
     </header>
     ${content}
     <nav class="bottom-nav">
@@ -968,7 +992,7 @@ function shell(content, active = 'home') {
       <button class="${active === 'draw' ? 'active' : ''}" data-action="draw">✦<span>抽卡</span></button>
       <button class="${active === 'collection' ? 'active' : ''}" data-action="collection">▦<span>词灵</span></button>
       <button class="${active === 'rank' ? 'active' : ''}" data-action="leaderboard">♛<span>排行</span></button>
-    </nav>
+    </nav>${state.audioPanel ? audioSettingsPanel() : ''}
   </div>${state.notice ? `<div class="toast">${esc(state.notice)}</div>` : ''}`;
 }
 function authView() {
@@ -1323,7 +1347,7 @@ async function loadUser() {
   render();
 }
 
-document.addEventListener('pointerdown', startMusic, { once: true });
+document.addEventListener('pointerdown', () => startMusic(activeSpirit().id), { once: true });
 document.addEventListener('click', async event => {
   const cell = event.target.closest('[data-cell]');
   if (cell) return selectCell(Number(cell.dataset.cell));
@@ -1361,7 +1385,9 @@ document.addEventListener('click', async event => {
   if (action === 'shop') { state.view = 'shop'; render(); }
   if (action === 'leaderboard') openLeaderboard();
   if (action === 'profile') { state.view = 'profile'; render(); }
-  if (action === 'music') toggleMusic();
+  if (action === 'audio-settings') { state.audioPanel = true; render(); }
+  if (action === 'close-audio-settings') { state.audioPanel = false; render(); }
+  if (action === 'toggle-audio') toggleAudioChannel(event.target.closest('[data-audio]')?.dataset.audio);
   if (action === 'speak') speakWord(state.game.target.word);
   if (action === 'pair-rule') toast('先点中文或英文，再点它的正确搭档');
   if (action === 'hint') useHint();
