@@ -133,7 +133,7 @@ hobby|🎨;children's palace|🏰;a cup of|☕;a bottle of|🍾;starter|🥗;mai
 `.trim().split(';').map(entry => entry.trim()).filter(Boolean).map(entry => entry.toLowerCase().split('|'))));
 
 const TIPS = [
-  '三消关可以自由选择单词，累计达到目标积分即可过关。',
+  '三消关需要达到目标积分，并认识足够多的不同单词。',
   '单词消除时会自动朗读，并弹出对应的中文意思。',
   '连续五次消对会触发金币爆发。',
   '四个相同词块会产生更强的范围消除。',
@@ -601,6 +601,17 @@ function tutorialForGame(game, progress) {
   ));
   return { active: first >= 0 && second >= 0, mode, cells: first >= 0 && second >= 0 ? [first, second] : [], step: 0 };
 }
+function coverageGoalFor(words) { return Math.min(4, words.length); }
+function coverageComplete(game) { return game.mode !== 'match3' || game.learnedTypes.length >= game.coverageGoal; }
+function levelComplete(game) {
+  return game.mode === 'match3'
+    ? game.score >= game.scoreGoal && coverageComplete(game)
+    : game.done >= game.goal;
+}
+function unlearnedMove(game) {
+  const learned = new Set(game.learnedTypes);
+  return possibleMoves(game.board).find(move => move.words.some(type => !learned.has(type))) || null;
+}
 function makeBoard(wordCount) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const board = [];
@@ -659,9 +670,11 @@ function newGame(level) {
     exploding: [],
     meaningFlash: null,
     memoryWords: [],
+    learnedTypes: [],
+    coverageGoal: coverageGoalFor(words),
     praise: '',
     tutorial: null,
-    message: mode === 'match3' ? '自由寻找三连，达到目标积分即可通关' : '点击中文和对应英文，完成配对'
+    message: mode === 'match3' ? `自由寻找三连，达到积分并认识 ${coverageGoalFor(words)} 个不同单词` : '点击中文和对应英文，完成配对'
   };
   if (mode === 'pair') game.target = words[0];
   return game;
@@ -790,6 +803,7 @@ function playPraise(kind, count, combo) {
 function announceElimination(game, types, cascade = false) {
   const learned = types.map(type => game.words[type]).filter(Boolean);
   if (!learned.length) return;
+  game.learnedTypes = [...new Set([...game.learnedTypes, ...types])];
   game.meaningFlash = { words: learned.slice(0, 3), cascade };
   learned.forEach(recordMastered);
   speakWords(learned.map(item => item.word));
@@ -804,7 +818,9 @@ async function flyMeaningToMemory(game, hold = 1500) {
   game.effect = '';
   game.exploding = [];
   game.praise = '';
-  game.memoryWords = words;
+  game.memoryWords = [...words, ...game.memoryWords]
+    .filter((word, index, all) => all.findIndex(item => item.word === word.word) === index)
+    .slice(0, 3);
   game.meaningFlash = null;
   render();
 }
@@ -890,9 +906,18 @@ async function selectCell(index) {
   await flyMeaningToMemory(game, game.effect === 'coin-burst' ? 1800 : 1500);
   await settleBoard(game, expanded.removed);
   game.busy = false;
-  if (game.score >= game.scoreGoal) return finishLevel(true);
+  if (levelComplete(game)) return finishLevel(true);
   if (game.moves <= 0) return finishLevel(false);
-  game.message = `当前 ${game.score} 分，再得 ${Math.max(0, game.scoreGoal - game.score)} 分过关`;
+  if (game.score >= game.scoreGoal && !coverageComplete(game)) {
+    game.message = `积分达标！再认识 ${game.coverageGoal - game.learnedTypes.length} 个新词`;
+    const move = unlearnedMove(game);
+    if (move) game.hintCells = [move.a, move.b];
+    else {
+      game.board = makeBoard(game.words.length);
+      const retry = unlearnedMove(game);
+      game.hintCells = retry ? [retry.a, retry.b] : [];
+    }
+  } else game.message = `当前 ${game.score} 分，再得 ${Math.max(0, game.scoreGoal - game.score)} 分过关`;
   render();
 }
 
@@ -931,6 +956,7 @@ async function selectPair(index) {
   const correct = first.type === card.type && first.lang !== card.lang;
   if (correct) {
     completeTutorial(game);
+    game.learnedTypes = [...new Set([...game.learnedTypes, card.type])];
     first.matched = true;
     card.matched = true;
     game.done += 1;
@@ -975,7 +1001,7 @@ async function finishLevel(win) {
   if (!game) return;
   const p = normalizedProgress();
   if (!win) {
-    state.result = { win: false, level: game.level, score: game.score, combo: game.maxCombo };
+    state.result = { win: false, level: game.level, score: game.score, combo: game.maxCombo, learned: game.learnedTypes.length };
     state.view = 'result';
     render();
     return;
@@ -992,7 +1018,7 @@ async function finishLevel(win) {
   p.streak += 1;
   p.bestCombo = Math.max(p.bestCombo, game.maxCombo);
   try { await persistProgress(); } catch {}
-  state.result = { win: true, level: game.level, score: game.score, combo: game.maxCombo, stars, xp, coins, ticket, mission: game.mission, missionCoins };
+  state.result = { win: true, level: game.level, score: game.score, combo: game.maxCombo, learned: game.learnedTypes.length, stars, xp, coins, ticket, mission: game.mission, missionCoins };
   state.view = 'result';
   soundCoinBurst();
   render();
@@ -1115,7 +1141,7 @@ function homeView() {
 function levelIntroView() {
   const game = state.game;
   if (!game) return homeView();
-  const modeText = game.mode === 'match3' ? `自由寻找三连，消除时学习发音和中文，累计达到 ${game.scoreGoal} 分` : '点击一个中文词牌和它对应的英文词牌';
+  const modeText = game.mode === 'match3' ? `自由寻找三连，达到 ${game.scoreGoal} 分并认识 ${game.coverageGoal} 个不同单词` : '点击一个中文词牌和它对应的英文词牌';
   return shell(`<main class="mission-intro ${game.mission.type}">
     <div class="mission-icon">${game.mission.icon}</div>
     <p>第 ${game.level} 关 · ${game.grade}年级</p>
@@ -1187,7 +1213,10 @@ function memoryInline(game) {
   if (!game.memoryWords.length) {
     return `<div class="target-memory-slot empty"><small>${label}</small><span>消除后显示单词与中文</span></div>`;
   }
-  return `<div class="target-memory-slot has-word"><small>${label}</small><div>${game.memoryWords.map(word => `<b><span>${esc(word.word)}</span><em>${esc(word.zh)}</em></b>`).join('')}</div></div>`;
+  return `<div class="target-memory-slot has-word"><small>${label}</small><div>${game.memoryWords.map(word => {
+    const icon = word.icon || visualForWord(word.word);
+    return `<div class="memory-word">${icon ? `<span class="memory-icon" aria-hidden="true">${icon}</span>` : ''}<b>${esc(word.word)}</b><em>${esc(word.zh)}</em><button type="button" data-speak-word="${esc(word.word)}" aria-label="再次朗读 ${esc(word.word)}">🔊 再听</button></div>`;
+  }).join('')}</div></div>`;
 }
 function gameView() {
   const game = state.game;
@@ -1198,7 +1227,7 @@ function gameView() {
     <section class="target-card ${game.mode}">
       ${spiritFigure(`target-spirit ${game.combo >= 5 ? 'excited' : ''}`)}
       ${game.mode === 'match3'
-        ? `<div class="target-summary"><small>自由三消积分关</small><h1>目标 ${game.scoreGoal} 分</h1><button class="score-chip">当前 ${game.score} 分</button></div>`
+        ? `<div class="target-summary"><small>自由三消积分关</small><h1>目标 ${game.scoreGoal} 分</h1><button class="score-chip">当前 ${game.score} 分</button><span class="coverage-chip">已学 ${game.learnedTypes.length}/${game.coverageGoal}</span></div>`
         : `<div class="target-summary"><small>${game.mission.name}</small><h1>找到中英搭档</h1><button data-action="pair-rule">中文＋英文</button></div>`}
       ${memoryInline(game)}
       <div class="combo"><b>${game.combo}</b><span>连击</span></div>
@@ -1229,7 +1258,7 @@ function resultView() {
     <p>${r.win ? '关卡完成' : '步数用完啦'}</p>
     <h1>${r.win ? ['漂亮！全部消掉啦！', '这关也被你拿下了！', '词灵都在为你鼓掌！'][r.level % 3] : '差一点就成功了'}</h1>
     ${r.win ? `<div class="stars">${'★'.repeat(r.stars)}${'☆'.repeat(3 - r.stars)}</div>${r.mission?.type !== 'normal' ? `<div class="mission-reward">${r.mission.icon} ${r.mission.name}奖励已开启</div>` : ''}<div class="reward-row"><span>经验 +${r.xp}</span><span>金币 +${r.coins}</span>${r.ticket ? `<span>抽卡券 +${r.ticket}</span>` : ''}</div>` : ''}
-    <div class="result-stats"><span>得分 <b>${r.score}</b></span><span>最高连击 <b>${r.combo}</b></span></div>
+    <div class="result-stats"><span>得分 <b>${r.score}</b></span><span>本关认识 <b>${r.learned || 0} 个词</b></span><span>最高连击 <b>${r.combo}</b></span></div>
     <button class="primary" data-action="${r.win ? 'next-level' : 'retry'}">${r.win ? (r.level >= 100 ? '返回星球' : '下一关') : '重新挑战'}</button>
     <button class="ghost" data-action="home">返回主页</button>
   </main>`, 'game');
@@ -1414,6 +1443,8 @@ async function loadUser() {
 
 document.addEventListener('pointerdown', () => startMusic(activeSpirit().id), { once: true });
 document.addEventListener('click', async event => {
+  const speakButton = event.target.closest('[data-speak-word]');
+  if (speakButton) return speakWord(speakButton.dataset.speakWord);
   const cell = event.target.closest('[data-cell]');
   if (cell) return selectCell(Number(cell.dataset.cell));
   const pair = event.target.closest('[data-pair]');

@@ -42,7 +42,10 @@ globalThis.__gameTest = {
   readAudioSettings: typeof readAudioSettings === 'function' ? readAudioSettings : null,
   audioIcon: typeof audioIcon === 'function' ? audioIcon : null,
   audioSettingsPanel: typeof audioSettingsPanel === 'function' ? audioSettingsPanel : null,
-  tutorialForGame: typeof tutorialForGame === 'function' ? tutorialForGame : null
+  tutorialForGame: typeof tutorialForGame === 'function' ? tutorialForGame : null,
+  coverageComplete: typeof coverageComplete === 'function' ? coverageComplete : null,
+  levelComplete: typeof levelComplete === 'function' ? levelComplete : null,
+  unlearnedMove: typeof unlearnedMove === 'function' ? unlearnedMove : null
 };`;
 vm.runInContext(source, context, { filename: 'app.js' });
 
@@ -70,6 +73,15 @@ if (!test.adjacent(tutorial.cells[0], tutorial.cells[1])) throw new Error('三�
 if (!test.findMatchLines(test.swap(tutorialGame.board, tutorial.cells[0], tutorial.cells[1])).length) throw new Error('三消教学没有使用真实可行移动');
 const pairTutorial = test.tutorialForGame(test.newGame(3), { tutorials: { match3: true, pair: false } });
 if (!pairTutorial.active || pairTutorial.mode !== 'pair' || pairTutorial.cells.length !== 2) throw new Error('配对教学内容无效');
+if (!test.coverageComplete || !test.levelComplete || !test.unlearnedMove) throw new Error('词汇覆盖通关接口不完整');
+const coverageGame = test.newGame(1);
+coverageGame.score = coverageGame.scoreGoal;
+if (coverageGame.coverageGoal !== 4) throw new Error('词汇覆盖目标不正确');
+if (test.levelComplete(coverageGame)) throw new Error('只达到积分不应通关');
+coverageGame.learnedTypes = [0, 1, 2, 3];
+if (!test.coverageComplete(coverageGame) || !test.levelComplete(coverageGame)) throw new Error('积分和覆盖达标后应通关');
+coverageGame.score = coverageGame.scoreGoal - 1;
+if (test.levelComplete(coverageGame)) throw new Error('只达到覆盖不应通关');
 const spiritIds = ['lingling', 'sprout', 'bubble', 'candy', 'spark', 'cloud', 'moon', 'rainbow'];
 if (!test.spiritMusicThemes || !test.musicThemeForSpirit) throw new Error('Spirit music themes are not configured');
 const themeSignatures = spiritIds.map(id => {
@@ -168,6 +180,8 @@ if (!memorySlot.includes('target-memory-slot') || !memorySlot.includes('本次�
 if (!pairMemorySlot.includes('target-memory-slot') || !pairMemorySlot.includes('本次学习词') || !pairMemorySlot.includes('dance') || !pairMemorySlot.includes('跳舞')) {
   throw new Error('Latest paired word is not rendered in the target-card memory slot');
 }
+const richMemorySlot = test.memoryInline({ memoryWords: [{ word: 'pencil', zh: '铅笔', icon: '✏️' }] });
+if (!richMemorySlot.includes('✏️') || !richMemorySlot.includes('data-speak-word="pencil"')) throw new Error('学习卡缺少图示或再次朗读动作');
 const minimumPictureCoverage = { 1: .78, 2: .75, 3: .30, 5: .45 };
 for (const [grade, minimum] of Object.entries(minimumPictureCoverage)) {
   const words = context.window.TEXTBOOK_WORDS.grades[grade];
