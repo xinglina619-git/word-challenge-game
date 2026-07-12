@@ -45,7 +45,8 @@ globalThis.__gameTest = {
   tutorialForGame: typeof tutorialForGame === 'function' ? tutorialForGame : null,
   coverageComplete: typeof coverageComplete === 'function' ? coverageComplete : null,
   levelComplete: typeof levelComplete === 'function' ? levelComplete : null,
-  unlearnedMove: typeof unlearnedMove === 'function' ? unlearnedMove : null
+  unlearnedMove: typeof unlearnedMove === 'function' ? unlearnedMove : null,
+  homeView: typeof homeView === 'function' ? homeView : null
 };`;
 vm.runInContext(source, context, { filename: 'app.js' });
 
@@ -82,6 +83,19 @@ coverageGame.learnedTypes = [0, 1, 2, 3];
 if (!test.coverageComplete(coverageGame) || !test.levelComplete(coverageGame)) throw new Error('积分和覆盖达标后应通关');
 coverageGame.score = coverageGame.scoreGoal - 1;
 if (test.levelComplete(coverageGame)) throw new Error('只达到覆盖不应通关');
+if (!test.homeView) throw new Error('首页视图缺失');
+test.gameState.user = {
+  profile: { nickname: '小测试员' },
+  progress: {
+    stage: 1, coins: 30, xp: 0, tickets: 1, dust: 0, streak: 0, bestCombo: 0,
+    draws: 0, pity: 0, collected: [], mistakes: {}, spirits: { lingling: 1 },
+    equipped: 'lingling', inventory: { hint: 3, shuffle: 2, addMoves: 1 }, tutorials: { match3: false, pair: false }
+  }
+};
+const home = test.homeView();
+if (!home.includes('继续学习') || !home.includes('成长奖励')) throw new Error('首页没有区分学习和奖励入口');
+if (home.indexOf('继续学习') > home.indexOf('成长奖励')) throw new Error('首页没有优先展示学习入口');
+if (!home.includes('开始消除')) throw new Error('首页主学习按钮缺失');
 const spiritIds = ['lingling', 'sprout', 'bubble', 'candy', 'spark', 'cloud', 'moon', 'rainbow'];
 if (!test.spiritMusicThemes || !test.musicThemeForSpirit) throw new Error('Spirit music themes are not configured');
 const themeSignatures = spiritIds.map(id => {
@@ -191,4 +205,4 @@ for (const [grade, minimum] of Object.entries(minimumPictureCoverage)) {
   }
 }
 
-console.log('GAME_SMOKE=PASS levels=7 board=6x6 match3=PASS pair=PASS missions=PASS praise=PASS pictures=PASS rainbow=PASS');
+console.log('GAME_SMOKE=PASS levels=7 board=6x6 match3=PASS pair=PASS missions=PASS praise=PASS pictures=PASS rainbow=PASS audio=PASS tutorial=PASS coverage=PASS');

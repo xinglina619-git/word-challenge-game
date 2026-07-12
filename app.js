@@ -1122,20 +1122,26 @@ function homeView() {
   const owned = Object.keys(p.spirits).length;
   const power = 100 + Object.values(p.spirits).reduce((sum, count) => sum + growthStage(count) * 25, 0) + Object.values(p.inventory).reduce((sum, count) => sum + count * 3, 0);
   const equipped = spiritById(p.equipped);
+  const tip = level === 1 && p.collected.length === 0
+    ? '先完成第 1 关，消除后可以再听单词发音。'
+    : TIPS[state.tip];
   return shell(`<main class="home-page">
     <section class="hero">
       <div><p>当前称号 · ${titleFor(level)}</p><h1>${esc(state.user.profile.nickname)}，今天消几个词？</h1><div class="hero-stats"><span>第 ${level} 关</span><span>${gradeFor(level)}年级</span><span>词灵 ${owned}/${SPIRITS.length}</span></div><button class="play-main" data-action="play">开始消除 ▶</button></div>
       <div class="hero-spirit-wrap">${spiritFigure('hero-spirit', equipped, p.spirits[equipped.id])}<small>${equipped.name} · ${growthName(p.spirits[equipped.id])} · 战力 ${power}</small></div>
     </section>
     <section class="level-progress"><div><b>成长等级 ${xpLevel(p.xp)}</b><span>${p.xp % 100}/100 XP</span></div><i><em style="width:${p.xp % 100}%"></em></i><small>再完成 ${nextTicket} 关获得免费抽卡券</small></section>
-    <div class="home-grid">
+    <section class="home-section learning"><h2>继续学习</h2><div class="learning-grid">
+      <button data-action="play"><span>▶️</span><b>继续第 ${level} 关</b><small>${gradeFor(level)}年级</small></button>
+      <button data-action="levels"><span>🗺️</span><b>选择关卡</b><small>1～${level} 关可玩</small></button>
+      <button data-action="mistakes"><span>📝</span><b>错词本</b><small>${Object.keys(p.mistakes).length} 个待复习</small></button>
+    </div></section>
+    <section class="home-section rewards"><h2>成长奖励</h2><div class="reward-grid">
       <button data-action="draw"><span>🎟</span><b>免费抽卡</b><small>${p.tickets} 张抽卡券</small></button>
       <button data-action="collection"><span>✨</span><b>词灵图鉴</b><small>已收集 ${owned} 只</small></button>
-      <button data-action="mistakes"><span>📝</span><b>错词本</b><small>${Object.keys(p.mistakes).length} 个待复习</small></button>
-      <button data-action="levels"><span>🗺️</span><b>选择关卡</b><small>1～${level} 关可玩</small></button>
-      <button data-action="shop"><span>🛍️</span><b>金币道具屋</b><small>用游戏金币兑换增强道具</small></button>
-    </div>
-    <section class="tip-card"><span>💡</span><div><b>词灵小提示</b><p>${esc(TIPS[state.tip])}</p></div></section>
+      <button data-action="shop"><span>🛍️</span><b>金币道具屋</b><small>只使用游戏金币</small></button>
+    </div></section>
+    <section class="tip-card"><span>💡</span><div><b>词灵小提示</b><p>${esc(tip)}</p></div></section>
   </main>`);
 }
 function levelIntroView() {
