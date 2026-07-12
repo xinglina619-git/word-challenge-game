@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { SessionStore } = require('./session-store');
+const { SessionStore, isLoopbackAddress } = require('./session-store');
 
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = __dirname;
@@ -121,6 +121,25 @@ const server = http.createServer(async (req, res) => {
       const body = await getBody(req); const phone = String(body.phone || '').trim();
       const user = readDb().users.find(item => item.phone === phone);
       if (!user || hash(String(body.password || ''), user.salt) !== user.passwordHash) return send(res, 401, { error: '手机号或密码不正确' });
+      return send(res, 200, { token: createSession(user.id), user: publicUser(user) });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/password/reset-local') {
+      if (!isLoopbackAddress(req.socket.remoteAddress)) {
+        return send(res, 403, { error: '请在运行游戏的电脑上重置密码' });
+      }
+      const body = await getBody(req);
+      const phone = String(body.phone || '').trim();
+      const password = String(body.password || '');
+      if (!validPhone(phone)) return send(res, 400, { error: '请输入 11 位手机号' });
+      if (password.length < 6) return send(res, 400, { error: '新密码至少需要 6 位' });
+      if (password !== String(body.confirmPassword || '')) return send(res, 400, { error: '两次输入的密码不一致' });
+      const db = readDb();
+      const user = db.users.find(item => item.phone === phone);
+      if (!user) return send(res, 404, { error: '没有找到这个家庭账号' });
+      user.salt = crypto.randomBytes(16).toString('hex');
+      user.passwordHash = hash(password, user.salt);
+      saveDb(db);
+      sessionStore.revokeUser(user.id);
       return send(res, 200, { token: createSession(user.id), user: publicUser(user) });
     }
     if (req.method === 'GET' && url.pathname === '/api/me') {

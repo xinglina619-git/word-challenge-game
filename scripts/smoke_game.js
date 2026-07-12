@@ -35,11 +35,21 @@ globalThis.__gameTest = {
   selectVoiceForRole: typeof selectVoiceForRole === 'function' ? selectVoiceForRole : null,
   cacheSystemVoices: typeof cacheSystemVoices === 'function' ? cacheSystemVoices : null,
   createLearningUtterance: typeof createLearningUtterance === 'function' ? createLearningUtterance : null,
-  createPraiseUtterance: typeof createPraiseUtterance === 'function' ? createPraiseUtterance : null
+  createPraiseUtterance: typeof createPraiseUtterance === 'function' ? createPraiseUtterance : null,
+  gameState: state,
+  authView: typeof authView === 'function' ? authView : null,
+  resetPasswordView: typeof resetPasswordView === 'function' ? resetPasswordView : null
 };`;
 vm.runInContext(source, context, { filename: 'app.js' });
 
 const test = context.__gameTest;
+if (!test.authView || !test.resetPasswordView) throw new Error('登录与密码恢复视图不完整');
+test.gameState.view = 'login';
+if (!test.authView().includes('autocomplete="current-password"')) throw new Error('登录密码缺少自动填充语义');
+if (!test.authView().includes('data-action="toggle-password"')) throw new Error('登录页缺少密码显示开关');
+if (!test.authView().includes('data-action="forgot-password"')) throw new Error('登录页缺少密码恢复入口');
+if (!test.resetPasswordView().includes('autocomplete="new-password"')) throw new Error('新密码缺少自动填充语义');
+if (!test.resetPasswordView().includes('id="reset-password-form"')) throw new Error('密码恢复表单缺失');
 const spiritIds = ['lingling', 'sprout', 'bubble', 'candy', 'spark', 'cloud', 'moon', 'rainbow'];
 if (!test.spiritMusicThemes || !test.musicThemeForSpirit) throw new Error('Spirit music themes are not configured');
 const themeSignatures = spiritIds.map(id => {

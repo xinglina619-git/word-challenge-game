@@ -155,6 +155,7 @@ const state = {
   leaderboard: [],
   currentRank: null,
   notice: '',
+  auth: { busy: false, error: '', passwordVisible: false },
   tip: Math.floor(Math.random() * TIPS.length),
   tipTimer: null,
   music: localStorage.getItem('word_spirit_music') !== 'off'
@@ -977,11 +978,27 @@ function authView() {
     <p>英语单词消消乐</p><h1>词灵星球</h1><small>消除单词，收集词灵，让每次升级都有新发现。</small>
     <div class="auth-tabs"><button class="${login ? 'active' : ''}" data-action="switch-login">登录</button><button class="${!login ? 'active' : ''}" data-action="switch-register">注册</button></div>
     <form id="auth-form">
-      <label>家长手机号<input required name="phone" inputmode="numeric" maxlength="11" placeholder="请输入11位手机号"></label>
-      <label>密码<input required name="password" type="password" minlength="6" placeholder="至少6位密码"></label>
+      <label>家长手机号<input required name="phone" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="请输入11位手机号"></label>
+      <label>密码<span class="password-field"><input required name="password" type="${state.auth.passwordVisible ? 'text' : 'password'}" autocomplete="${login ? 'current-password' : 'new-password'}" minlength="6" placeholder="至少6位密码"><button type="button" class="password-toggle" data-action="toggle-password">${state.auth.passwordVisible ? '隐藏' : '显示'}</button></span></label>
       ${login ? '' : '<label>玩家昵称<input required name="nickname" maxlength="12" placeholder="例如：闪闪"></label>'}
-      <button class="primary" type="submit">${login ? '进入词灵星球' : '创建玩家'}</button>
+      ${state.auth.error ? `<div class="form-error" role="alert" tabindex="-1">${esc(state.auth.error)}</div>` : ''}
+      <button class="primary" type="submit" ${state.auth.busy ? 'disabled' : ''}>${state.auth.busy ? '正在进入…' : login ? '进入词灵星球' : '创建玩家'}</button>
+      ${login ? '<button class="auth-help" type="button" data-action="forgot-password">忘记密码？在本机恢复</button>' : ''}
     </form><small class="privacy">家庭试玩版，不展示手机号，不包含付费抽卡。</small>
+  </section></main>`;
+}
+function resetPasswordView() {
+  return `<main class="auth-page"><section class="auth-card compact-auth">
+    ${spiritFigure('auth-spirit')}
+    <p>家长帮助</p><h1>重新设置密码</h1><small>为了保护家庭账号，只能在运行游戏的这台电脑上操作。</small>
+    <form id="reset-password-form">
+      <label>家长手机号<input required name="phone" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="请输入注册手机号"></label>
+      <label>新密码<span class="password-field"><input required name="password" type="${state.auth.passwordVisible ? 'text' : 'password'}" autocomplete="new-password" minlength="6" placeholder="至少6位新密码"><button type="button" class="password-toggle" data-action="toggle-password">${state.auth.passwordVisible ? '隐藏' : '显示'}</button></span></label>
+      <label>再次输入<input required name="confirmPassword" type="${state.auth.passwordVisible ? 'text' : 'password'}" autocomplete="new-password" minlength="6" placeholder="再次输入新密码"></label>
+      ${state.auth.error ? `<div class="form-error" role="alert" tabindex="-1">${esc(state.auth.error)}</div>` : ''}
+      <button class="primary" type="submit" ${state.auth.busy ? 'disabled' : ''}>${state.auth.busy ? '正在重置…' : '重置并进入游戏'}</button>
+      <button class="auth-help" type="button" data-action="back-login">返回登录</button>
+    </form>
   </section></main>`;
 }
 function homeView() {
@@ -1192,7 +1209,7 @@ function profileView() {
 }
 function render() {
   if (!state.user) {
-    app.innerHTML = authView();
+    app.innerHTML = state.view === 'reset-password' ? resetPasswordView() : authView();
     return;
   }
   if (state.view === 'game') app.innerHTML = gameView();
@@ -1320,8 +1337,16 @@ document.addEventListener('click', async event => {
   if (itemButton && itemButton.dataset.action === 'buy-item') return buyItem(itemButton.dataset.item, Number(itemButton.dataset.price));
   const action = event.target.closest('[data-action]')?.dataset.action;
   if (!action) return;
-  if (action === 'switch-login') { state.view = 'login'; render(); }
-  if (action === 'switch-register') { state.view = 'register'; render(); }
+  if (action === 'switch-login') { state.auth.error = ''; state.view = 'login'; render(); }
+  if (action === 'switch-register') { state.auth.error = ''; state.view = 'register'; render(); }
+  if (action === 'toggle-password') {
+    state.auth.passwordVisible = !state.auth.passwordVisible;
+    document.querySelectorAll('input[name="password"],input[name="confirmPassword"]').forEach(input => { input.type = state.auth.passwordVisible ? 'text' : 'password'; });
+    event.target.textContent = state.auth.passwordVisible ? '隐藏' : '显示';
+    return;
+  }
+  if (action === 'forgot-password') { state.auth.error = ''; state.view = 'reset-password'; render(); }
+  if (action === 'back-login') { state.auth.error = ''; state.view = 'login'; render(); }
   if (action === 'home' || action === 'leave-game') { state.view = 'home'; state.game = null; render(); }
   if (action === 'play') startLevel(Math.min(100, normalizedProgress().stage));
   if (action === 'levels') { state.view = 'levels'; render(); }
@@ -1363,8 +1388,11 @@ document.addEventListener('submit', async event => {
     event.preventDefault();
     const login = state.view === 'login';
     const payload = Object.fromEntries(new FormData(event.target).entries());
-    const button = event.target.querySelector('button');
+    const button = event.target.querySelector('button[type="submit"]');
+    state.auth.busy = true;
+    state.auth.error = '';
     button.disabled = true;
+    button.textContent = login ? '正在进入…' : '正在创建…';
     try {
       const data = await api(login ? '/api/login' : '/api/register', { method: 'POST', body: JSON.stringify(payload) });
       state.token = data.token;
@@ -1372,11 +1400,37 @@ document.addEventListener('submit', async event => {
       state.user = data.user;
       const progress = normalizedProgress();
       restartMusicForSpirit(progress.equipped);
+      state.auth.busy = false;
       state.view = 'home';
       render();
     } catch (error) {
-      button.disabled = false;
-      toast(error.message);
+      state.auth.busy = false;
+      state.auth.error = error.message;
+      render();
+      document.querySelector('.form-error')?.focus();
+    }
+  }
+  if (event.target.id === 'reset-password-form') {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(event.target).entries());
+    state.auth.busy = true;
+    state.auth.error = '';
+    render();
+    try {
+      const data = await api('/api/password/reset-local', { method: 'POST', body: JSON.stringify(payload) });
+      state.token = data.token;
+      localStorage.setItem('word_spirit_token', data.token);
+      state.user = data.user;
+      const progress = normalizedProgress();
+      restartMusicForSpirit(progress.equipped);
+      state.auth.busy = false;
+      state.view = 'home';
+      render();
+    } catch (error) {
+      state.auth.busy = false;
+      state.auth.error = error.message;
+      render();
+      document.querySelector('.form-error')?.focus();
     }
   }
   if (event.target.id === 'profile-form') {
