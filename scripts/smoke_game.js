@@ -205,4 +205,14 @@ for (const [grade, minimum] of Object.entries(minimumPictureCoverage)) {
   }
 }
 
+const styles = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
+const tutorialCardRule = styles.match(/\.tutorial-card\{[^}]*\}/)?.[0] || '';
+const tutorialPulseRule = styles.match(/@keyframes tutorial-pulse\{[\s\S]*?\}\}/)?.[0] || '';
+if (!tutorialCardRule.includes('top:16px') || tutorialCardRule.includes('bottom:')) {
+  throw new Error('教学说明卡必须固定在顶部，不能遮住棋盘目标');
+}
+if (tutorialPulseRule.includes('transform:')) {
+  throw new Error('教学高亮动画不能移动可点击目标');
+}
+
 console.log('GAME_SMOKE=PASS levels=7 board=6x6 match3=PASS pair=PASS missions=PASS praise=PASS pictures=PASS rainbow=PASS audio=PASS tutorial=PASS coverage=PASS');
