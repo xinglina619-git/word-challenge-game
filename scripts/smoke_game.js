@@ -3,12 +3,17 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
+let focusedSelector = '';
+const appElement = { innerHTML: '' };
 const context = {
   console,
   window: {},
   localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
   document: {
-    querySelector: () => ({ innerHTML: '' }),
+    querySelector: selector => selector === '#app'
+      ? appElement
+      : { focus: () => { focusedSelector = selector; } },
+    querySelectorAll: () => [],
     addEventListener: () => {}
   },
   SpeechSynthesisUtterance: class SpeechSynthesisUtterance {
@@ -38,6 +43,8 @@ globalThis.__gameTest = {
   createPraiseUtterance: typeof createPraiseUtterance === 'function' ? createPraiseUtterance : null,
   gameState: state,
   authView: typeof authView === 'function' ? authView : null,
+  authSubmitLabel: typeof authSubmitLabel === 'function' ? authSubmitLabel : null,
+  applyRegistrationSuccess: typeof applyRegistrationSuccess === 'function' ? applyRegistrationSuccess : null,
   resetPasswordView: typeof resetPasswordView === 'function' ? resetPasswordView : null,
   readAudioSettings: typeof readAudioSettings === 'function' ? readAudioSettings : null,
   audioIcon: typeof audioIcon === 'function' ? audioIcon : null,
@@ -52,10 +59,44 @@ vm.runInContext(source, context, { filename: 'app.js' });
 
 const test = context.__gameTest;
 if (!test.authView || !test.resetPasswordView) throw new Error('登录与密码恢复视图不完整');
+if (test.gameState.view !== 'login') throw new Error('无有效令牌时应默认显示登录页');
 test.gameState.view = 'login';
-if (!test.authView().includes('autocomplete="current-password"')) throw new Error('登录密码缺少自动填充语义');
-if (!test.authView().includes('data-action="toggle-password"')) throw new Error('登录页缺少密码显示开关');
-if (!test.authView().includes('data-action="forgot-password"')) throw new Error('登录页缺少密码恢复入口');
+let authHtml = test.authView();
+if (!authHtml.includes('autocomplete="current-password"')) throw new Error('登录密码缺少自动填充语义');
+if (!authHtml.includes('data-action="toggle-password"')) throw new Error('登录页缺少密码显示开关');
+if (!authHtml.includes('data-action="forgot-password"')) throw new Error('登录页缺少密码恢复入口');
+if (!authHtml.includes('role="tablist"')) throw new Error('认证页签缺少 tablist 语义');
+if (!/data-action="switch-login"[^>]*type="button"[^>]*role="tab"[^>]*aria-selected="true"/.test(authHtml)) throw new Error('登录页签选中语义不正确');
+if (!/data-action="switch-register"[^>]*type="button"[^>]*role="tab"[^>]*aria-selected="false"/.test(authHtml)) throw new Error('注册页签选中语义不正确');
+if (!test.authSubmitLabel || !test.applyRegistrationSuccess) throw new Error('注册回登录状态接口不完整');
+if (test.authSubmitLabel('login', true) !== '正在登录…') throw new Error('登录忙碌文案不准确');
+if (test.authSubmitLabel('register', true) !== '正在注册…') throw new Error('注册忙碌文案不准确');
+
+test.gameState.token = null;
+test.gameState.user = null;
+test.gameState.view = 'register';
+test.gameState.auth = { busy: true, error: '', success: '', phone: '', passwordVisible: false };
+authHtml = test.authView();
+if (!authHtml.includes('正在注册…') || !/type="submit"[^>]*disabled/.test(authHtml)) throw new Error('注册忙碌状态未禁用提交');
+
+test.applyRegistrationSuccess({
+  ok: true,
+  message: '注册成功，请使用刚才的手机号和密码登录',
+  phone: '13800000000'
+});
+if (test.gameState.view !== 'login' || test.gameState.user || test.gameState.token) throw new Error('注册成功不应直接进入游戏或建立前端会话');
+if (test.gameState.auth.phone !== '13800000000') throw new Error('注册成功后没有保留手机号');
+if (test.gameState.auth.success !== '注册成功，请使用刚才的手机号和密码登录') throw new Error('注册成功提示不准确');
+authHtml = test.authView();
+if (!authHtml.includes('role="status"')) throw new Error('注册成功提示缺少 status 语义');
+if (!authHtml.includes('value="13800000000"')) throw new Error('登录页没有回填刚注册的手机号');
+if (/<input[^>]+name="password"[^>]+value=/.test(authHtml)) throw new Error('注册成功后密码不应回填');
+if (focusedSelector !== '#auth-form input[name="password"]') throw new Error('注册成功后没有聚焦登录密码框');
+
+test.gameState.auth.success = '';
+test.gameState.auth.error = '手机号或密码不正确';
+authHtml = test.authView();
+if (!authHtml.includes('role="alert" tabindex="-1"')) throw new Error('认证错误缺少可聚焦 alert 语义');
 if (!test.resetPasswordView().includes('autocomplete="new-password"')) throw new Error('新密码缺少自动填充语义');
 if (!test.resetPasswordView().includes('id="reset-password-form"')) throw new Error('密码恢复表单缺失');
 if (!test.readAudioSettings || !test.audioIcon || !test.audioSettingsPanel) throw new Error('声音设置接口不完整');
@@ -215,4 +256,4 @@ if (tutorialPulseRule.includes('transform:')) {
   throw new Error('教学高亮动画不能移动可点击目标');
 }
 
-console.log('GAME_SMOKE=PASS levels=7 board=6x6 match3=PASS pair=PASS missions=PASS praise=PASS pictures=PASS rainbow=PASS audio=PASS tutorial=PASS coverage=PASS');
+console.log('GAME_SMOKE=PASS levels=7 board=6x6 match3=PASS pair=PASS missions=PASS praise=PASS pictures=PASS rainbow=PASS audio=PASS tutorial=PASS coverage=PASS auth=PASS register-status=PASS');

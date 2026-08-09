@@ -169,7 +169,7 @@ const state = {
   leaderboard: [],
   currentRank: null,
   notice: '',
-  auth: { busy: false, error: '', passwordVisible: false },
+  auth: { busy: false, error: '', success: '', phone: '', passwordVisible: false },
   tip: Math.floor(Math.random() * TIPS.length),
   tipTimer: null,
   audio: readAudioSettings(),
@@ -1087,19 +1087,39 @@ function shell(content, active = 'home') {
 }
 function authView() {
   const login = state.view === 'login';
+  const mode = login ? 'login' : 'register';
   return `<main class="auth-page"><section class="auth-card">
     ${spiritFigure('auth-spirit')}
     <p>英语单词消消乐</p><h1>词灵星球</h1><small>消除单词，收集词灵，让每次升级都有新发现。</small>
-    <div class="auth-tabs"><button class="${login ? 'active' : ''}" data-action="switch-login">登录</button><button class="${!login ? 'active' : ''}" data-action="switch-register">注册</button></div>
-    <form id="auth-form">
-      <label>家长手机号<input required name="phone" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="请输入11位手机号"></label>
+    <div class="auth-tabs" role="tablist"><button class="${login ? 'active' : ''}" data-action="switch-login" type="button" role="tab" aria-selected="${login}" ${state.auth.busy ? 'disabled' : ''}>登录</button><button class="${!login ? 'active' : ''}" data-action="switch-register" type="button" role="tab" aria-selected="${!login}" ${state.auth.busy ? 'disabled' : ''}>注册</button></div>
+    <form id="auth-form" aria-busy="${state.auth.busy}">
+      <label>家长手机号<input required name="phone" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="请输入11位手机号" value="${esc(state.auth.phone)}"></label>
       <label>密码<span class="password-field"><input required name="password" type="${state.auth.passwordVisible ? 'text' : 'password'}" autocomplete="${login ? 'current-password' : 'new-password'}" minlength="6" placeholder="至少6位密码"><button type="button" class="password-toggle" data-action="toggle-password">${state.auth.passwordVisible ? '隐藏' : '显示'}</button></span></label>
       ${login ? '' : '<label>玩家昵称<input required name="nickname" maxlength="12" placeholder="例如：闪闪"></label>'}
+      ${state.auth.success ? `<div class="form-success" role="status">${esc(state.auth.success)}</div>` : ''}
       ${state.auth.error ? `<div class="form-error" role="alert" tabindex="-1">${esc(state.auth.error)}</div>` : ''}
-      <button class="primary" type="submit" ${state.auth.busy ? 'disabled' : ''}>${state.auth.busy ? '正在进入…' : login ? '进入词灵星球' : '创建玩家'}</button>
+      <button class="primary" type="submit" ${state.auth.busy ? 'disabled' : ''}>${authSubmitLabel(mode, state.auth.busy)}</button>
       ${login ? '<button class="auth-help" type="button" data-action="forgot-password">忘记密码？在本机恢复</button>' : ''}
     </form><small class="privacy">家庭试玩版，不展示手机号，不包含付费抽卡。</small>
   </section></main>`;
+}
+
+function authSubmitLabel(mode, busy) {
+  if (busy) return mode === 'login' ? '正在登录…' : '正在注册…';
+  return mode === 'login' ? '进入词灵星球' : '创建玩家';
+}
+
+function applyRegistrationSuccess(data) {
+  state.token = null;
+  state.user = null;
+  state.view = 'login';
+  state.auth.busy = false;
+  state.auth.error = '';
+  state.auth.success = data.message;
+  state.auth.phone = data.phone;
+  state.auth.passwordVisible = false;
+  render();
+  document.querySelector('#auth-form input[name="password"]')?.focus();
 }
 function resetPasswordView() {
   return `<main class="auth-page"><section class="auth-card compact-auth">
@@ -1429,7 +1449,7 @@ async function buyItem(id, price) {
 }
 async function loadUser() {
   if (!state.token) {
-    state.view = 'register';
+    state.view = 'login';
     render();
     return;
   }
@@ -1463,16 +1483,22 @@ document.addEventListener('click', async event => {
   if (itemButton && itemButton.dataset.action === 'buy-item') return buyItem(itemButton.dataset.item, Number(itemButton.dataset.price));
   const action = event.target.closest('[data-action]')?.dataset.action;
   if (!action) return;
-  if (action === 'switch-login') { state.auth.error = ''; state.view = 'login'; render(); }
-  if (action === 'switch-register') { state.auth.error = ''; state.view = 'register'; render(); }
+  if (action === 'switch-login' || action === 'switch-register') {
+    if (state.auth.busy) return;
+    state.auth.phone = document.querySelector('#auth-form input[name="phone"]')?.value || state.auth.phone;
+    state.auth.error = '';
+    state.auth.success = '';
+    state.view = action === 'switch-login' ? 'login' : 'register';
+    render();
+  }
   if (action === 'toggle-password') {
     state.auth.passwordVisible = !state.auth.passwordVisible;
     document.querySelectorAll('input[name="password"],input[name="confirmPassword"]').forEach(input => { input.type = state.auth.passwordVisible ? 'text' : 'password'; });
     event.target.textContent = state.auth.passwordVisible ? '隐藏' : '显示';
     return;
   }
-  if (action === 'forgot-password') { state.auth.error = ''; state.view = 'reset-password'; render(); }
-  if (action === 'back-login') { state.auth.error = ''; state.view = 'login'; render(); }
+  if (action === 'forgot-password') { state.auth.error = ''; state.auth.success = ''; state.view = 'reset-password'; render(); }
+  if (action === 'back-login') { state.auth.error = ''; state.auth.success = ''; state.view = 'login'; render(); }
   if (action === 'home' || action === 'leave-game') { state.view = 'home'; state.game = null; render(); }
   if (action === 'play') startLevel(Math.min(100, normalizedProgress().stage));
   if (action === 'levels') { state.view = 'levels'; render(); }
@@ -1523,15 +1549,20 @@ document.addEventListener('click', async event => {
 document.addEventListener('submit', async event => {
   if (event.target.id === 'auth-form') {
     event.preventDefault();
+    if (state.auth.busy) return;
     const login = state.view === 'login';
     const payload = Object.fromEntries(new FormData(event.target).entries());
-    const button = event.target.querySelector('button[type="submit"]');
     state.auth.busy = true;
     state.auth.error = '';
-    button.disabled = true;
-    button.textContent = login ? '正在进入…' : '正在创建…';
+    state.auth.success = '';
+    state.auth.phone = String(payload.phone || '').trim();
+    render();
     try {
       const data = await api(login ? '/api/login' : '/api/register', { method: 'POST', body: JSON.stringify(payload) });
+      if (!login) {
+        applyRegistrationSuccess(data);
+        return;
+      }
       state.token = data.token;
       localStorage.setItem('word_spirit_token', data.token);
       state.user = data.user;
