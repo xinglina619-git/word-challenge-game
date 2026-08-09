@@ -10,6 +10,7 @@ $powershellExe = (Get-Command powershell.exe -ErrorAction Stop).Source
 $nodeExe = (Get-Command node.exe -ErrorAction Stop).Source
 $temporaryRoots = [Collections.Generic.List[string]]::new()
 $knownProcesses = [Collections.Generic.List[Diagnostics.Process]]::new()
+$duplicatePathEnvironment = @([Environment]::GetEnvironmentVariables('Process').Keys | Where-Object { $_ -ieq 'PATH' }).Count -gt 1
 
 function Assert-True([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
@@ -150,7 +151,9 @@ try {
   Assert-True ($started.ExitCode -eq 0) ("An unused port should start Word Spirit Planet`n" + $started.Output)
   $health = Wait-Health $startPort 'word-spirit-planet'
   Assert-True ($health.version -eq '0.3.0' -and $health.ok -eq $true) 'Started health identity does not match'
-  Assert-Contains $started.Output 'WORD_SPIRIT_PATH_NORMALIZED' 'Duplicate Path keys must be normalized before Start-Process'
+  if ($duplicatePathEnvironment) {
+    Assert-Contains $started.Output 'WORD_SPIRIT_PATH_NORMALIZED' 'Duplicate Path keys must be normalized before Start-Process'
+  }
   Assert-Contains $started.Output 'WORD_SPIRIT_BROWSER_SKIPPED' 'Test mode must suppress the browser'
   Assert-True $startedPidMatch.Success 'Launcher must report its known child PID in test mode'
   Assert-True ([bool]$startedProcess) 'Launcher-reported child PID must still be running after health success'
@@ -188,7 +191,18 @@ try {
   Assert-Contains $timeout.Output (ConvertFrom-TestText '5ZCv5Yqo6LaF5pe2') 'Startup timeout must include a Chinese explanation'
   Assert-Contains $timeout.Output (ConvertFrom-TestText '5pel5b+X') 'Startup timeout must mention logs in Chinese'
 
-  Write-Output 'LAUNCHER=PASS reuse=PASS start=PASS mismatch=PASS node-missing=PASS timeout=PASS browser-disabled=PASS'
+  $package = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'package.json') | ConvertFrom-Json
+  $index = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'index.html')
+  $readme = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'README.md')
+  Assert-True ($package.version -eq '0.3.0') 'Package version must be 0.3.0'
+  Assert-Contains $package.scripts.test 'launcher_test.ps1' 'npm test must include the launcher test'
+  Assert-Contains $index '/app.js?v=19' 'app.js cache version must be updated'
+  Assert-Contains $index '/styles.css?v=20' 'styles.css cache version must be updated'
+  Assert-Contains $readme 'http://127.0.0.1:31876' 'README must document the dedicated desktop URL'
+  Assert-Contains $readme (ConvertFrom-TestText '5rOo5YaM5oiQ5Yqf5ZCO6K+36L+U5Zue55m75b2V') 'README must explain that registration returns to login'
+
+  $duplicatePathResult = if ($duplicatePathEnvironment) { 'PASS' } else { 'SKIP' }
+  Write-Output "LAUNCHER=PASS reuse=PASS start=PASS mismatch=PASS node-missing=PASS timeout=PASS browser-disabled=PASS duplicate-path=$duplicatePathResult"
 } finally {
   foreach ($process in $knownProcesses) {
     if ($process -and -not $process.HasExited) {
