@@ -4,6 +4,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { SessionStore, isLoopbackAddress } = require('./session-store');
 
+const APP_ID = 'word-spirit-planet';
+const APP_VERSION = '0.3.0';
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = __dirname;
 const DATA_DIR = process.env.WORD_SPIRIT_DATA_DIR || path.join(ROOT, 'data');
@@ -104,6 +106,9 @@ function serveFile(res, file) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
+    if (req.method === 'GET' && url.pathname === '/api/health') {
+      return send(res, 200, { app: APP_ID, version: APP_VERSION, ok: true });
+    }
     if (req.method === 'POST' && url.pathname === '/api/register') {
       const body = await getBody(req);
       const phone = String(body.phone || '').trim();
@@ -119,7 +124,11 @@ const server = http.createServer(async (req, res) => {
         progress: normalizeProgress({ stage: 1, coins: 30, tickets: 1 }), createdAt: new Date().toISOString()
       };
       db.users.push(user); saveDb(db);
-      return send(res, 201, { token: createSession(user.id), user: publicUser(user) });
+      return send(res, 201, {
+        ok: true,
+        message: '注册成功，请使用刚才的手机号和密码登录',
+        phone
+      });
     }
     if (req.method === 'POST' && url.pathname === '/api/login') {
       const body = await getBody(req); const phone = String(body.phone || '').trim();

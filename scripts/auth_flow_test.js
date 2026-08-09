@@ -1,6 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const http = require('http');
+const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -25,8 +26,19 @@ assert.strictEqual(isLoopbackAddress('192.168.1.8'), false);
 console.log('SESSION_STORE=PASS hash=PASS restart=PASS revoke=PASS loopback=PASS');
 
 const root = path.resolve(__dirname, '..');
-const port = 31873;
+let port;
 const account = { phone: '13800138888', password: 'Family123!', nickname: '登录测试' };
+
+function findFreePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const assigned = probe.address().port;
+      probe.close(error => error ? reject(error) : resolve(assigned));
+    });
+  });
+}
 
 function request(method, pathname, body, token) {
   return new Promise((resolve, reject) => {
@@ -62,7 +74,7 @@ function startServer() {
 
 async function waitForServer() {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    try { if ((await request('GET', '/')).status === 200) return; } catch {}
+    try { if ((await request('GET', '/api/health')).status === 200) return; } catch {}
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   throw new Error('测试服务器未在 4 秒内启动');
@@ -77,11 +89,35 @@ async function stopServer(child) {
 (async () => {
   let child;
   try {
+    port = await findFreePort();
     child = startServer();
     await waitForServer();
+    const health = await request('GET', '/api/health');
+    assert.deepStrictEqual(health.body, {
+      app: 'word-spirit-planet', version: '0.3.0', ok: true
+    });
+
+    const sessionsBefore = JSON.parse(fs.readFileSync(sessionFile, 'utf8')).sessions.length;
     const registered = await request('POST', '/api/register', account);
     assert.strictEqual(registered.status, 201);
-    const originalToken = registered.body.token;
+    assert.deepStrictEqual(registered.body, {
+      ok: true,
+      message: '注册成功，请使用刚才的手机号和密码登录',
+      phone: account.phone
+    });
+    assert.strictEqual(Object.hasOwn(registered.body, 'token'), false);
+    assert.strictEqual(Object.hasOwn(registered.body, 'user'), false);
+    assert.strictEqual(JSON.parse(fs.readFileSync(sessionFile, 'utf8')).sessions.length, sessionsBefore);
+    assert.strictEqual((await request('GET', '/api/me')).status, 401);
+
+    const loggedIn = await request('POST', '/api/login', {
+      phone: account.phone,
+      password: account.password
+    });
+    assert.strictEqual(loggedIn.status, 200);
+    assert.strictEqual(typeof loggedIn.body.token, 'string');
+    assert(loggedIn.body.token.length >= 32);
+    const originalToken = loggedIn.body.token;
 
     await stopServer(child);
     child = startServer();
@@ -96,9 +132,17 @@ async function stopServer(child) {
     assert.strictEqual(changed.status, 200);
     assert.strictEqual((await request('GET', '/api/me', null, originalToken)).status, 401);
     assert.strictEqual((await request('GET', '/api/me', null, changed.body.token)).status, 200);
+    assert.strictEqual((await request('POST', '/api/login', {
+      phone: account.phone,
+      password: account.password
+    })).status, 401);
+    assert.strictEqual((await request('POST', '/api/login', {
+      phone: account.phone,
+      password: 'NewFamily123!'
+    })).status, 200);
     assert.strictEqual((await request('POST', '/api/logout', null, changed.body.token)).status, 200);
     assert.strictEqual((await request('GET', '/api/me', null, changed.body.token)).status, 401);
-    console.log('AUTH_FLOW=PASS restart=PASS reset=PASS logout=PASS');
+    console.log('AUTH_FLOW=PASS register=PASS login=PASS restart=PASS reset=PASS logout=PASS health=PASS');
   } finally {
     await stopServer(child);
     fs.rmSync(tempDir, { recursive: true, force: true });
