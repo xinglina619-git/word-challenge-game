@@ -196,8 +196,8 @@ try {
   $readme = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'README.md')
   Assert-True ($package.version -eq '0.3.0') 'Package version must be 0.3.0'
   Assert-Contains $package.scripts.test 'launcher_test.ps1' 'npm test must include the launcher test'
-  Assert-Contains $index '/app.js?v=19' 'app.js cache version must be updated'
-  Assert-Contains $index '/styles.css?v=20' 'styles.css cache version must be updated'
+  Assert-Contains $index '/app.js?v=20' 'app.js cache version must be updated'
+  Assert-Contains $index '/styles.css?v=21' 'styles.css cache version must be updated'
   Assert-Contains $readme 'http://127.0.0.1:31876' 'README must document the dedicated desktop URL'
   Assert-Contains $readme (ConvertFrom-TestText '5rOo5YaM5oiQ5Yqf5ZCO6K+36L+U5Zue55m75b2V') 'README must explain that registration returns to login'
 
