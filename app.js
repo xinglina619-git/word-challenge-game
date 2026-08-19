@@ -184,6 +184,14 @@ function normalizedProgress() {
 }
 function titleFor(stage) { return TITLES[Math.min(9, Math.floor((Math.max(1, stage) - 1) / 10))]; }
 function gradeFor(level) { return Math.min(5, Math.ceil(level / 20)); }
+function starsForGame(game) {
+  if (game.mode === 'pair') {
+    if (game.pairMistakes === 0) return 3;
+    if (game.pairMistakes <= 2) return 2;
+    return 1;
+  }
+  return game.moves >= 10 ? 3 : game.moves >= 5 ? 2 : 1;
+}
 function xpLevel(xp) { return Math.floor(xp / 100) + 1; }
 function persistProgress() {
   return api('/api/progress', { method: 'PATCH', body: JSON.stringify(normalizedProgress()) })
@@ -572,6 +580,7 @@ function newGame(level) {
     targetType: 0,
     selected: null,
     hintCells: [],
+    pairMistakes: 0,
     moves: mode === 'match3' ? 24 - Math.min(5, Math.floor((level - 1) / 20)) : words.length + 5,
     goal: mode === 'match3' ? 0 : words.length,
     scoreGoal: mode === 'match3'
@@ -868,6 +877,7 @@ async function selectPair(index) {
     }
     game.praise = playPraise(game.effect, 4 + game.combo, game.combo);
   } else {
+    game.pairMistakes += 1;
     game.combo = 0;
     game.effect = 'shake';
     game.praise = '';
@@ -897,7 +907,7 @@ async function finishLevel(win) {
     render();
     return;
   }
-  const stars = game.moves >= 10 ? 3 : game.moves >= 5 ? 2 : 1;
+  const stars = starsForGame(game);
   const xp = 30 + game.grade * 8 + stars * 5 + (game.mission.type === 'boss' ? 20 : 0);
   const missionCoins = game.mission.type === 'treasure' ? 30 : game.mission.type === 'boss' ? 20 : 0;
   const coins = 12 + game.grade * 4 + stars * 4 + game.sessionCoins + missionCoins;

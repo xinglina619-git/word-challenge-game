@@ -36,7 +36,7 @@ vm.runInContext(fs.readFileSync(path.join(root, 'textbook-words.generated.js'), 
 vm.runInContext(fs.readFileSync(path.join(root, 'curriculum.js'), 'utf8'), context, { filename: 'curriculum.js' });
 const source = `${fs.readFileSync(path.join(root, 'app.js'), 'utf8')}
 globalThis.__gameTest = {
-  newGame, findMatchLines, possibleMoves, expandedRemoval, gradeFor, wordsForLevel, adjacent, swap,
+  newGame, starsForGame, findMatchLines, possibleMoves, expandedRemoval, gradeFor, wordsForLevel, adjacent, swap,
   tileType, makeTile, isMixedMeaningLine,
   modeForLevel, missionForLevel, praiseForEffect, visualForWord,
   visualForPairWord: typeof visualForPairWord === 'function' ? visualForPairWord : null,
@@ -234,6 +234,22 @@ const matchGame = test.newGame(2);
 const pairGame = test.newGame(3);
 if (matchGame.mode !== 'match3' || pairGame.mode !== 'pair') throw new Error('Alternating game modes failed');
 if (pairGame.pairs.length !== pairGame.words.length * 2) throw new Error('Pair-card generation failed');
+const pairStars = test.newGame(3);
+pairStars.moves = 5;
+pairStars.pairMistakes = 0;
+if (test.starsForGame(pairStars) !== 3) throw new Error('配对零失误应获得三星');
+pairStars.pairMistakes = 1;
+if (test.starsForGame(pairStars) !== 2) throw new Error('配对一次失误应获得二星');
+pairStars.pairMistakes = 2;
+if (test.starsForGame(pairStars) !== 2) throw new Error('配对两次失误应获得二星');
+pairStars.pairMistakes = 3;
+if (test.starsForGame(pairStars) !== 1) throw new Error('配对三次失误应获得一星');
+
+const matchStars = test.newGame(2);
+matchStars.moves = 10;
+if (test.starsForGame(matchStars) !== 3) throw new Error('三消三星阈值不应改变');
+matchStars.moves = 5;
+if (test.starsForGame(matchStars) !== 2) throw new Error('三消二星阈值不应改变');
 if (test.missionForLevel(5).type !== 'treasure' || test.missionForLevel(10).type !== 'boss') throw new Error('Mission cadence failed');
 if (test.praiseForEffect('pop', 3, 1) !== 'GOOD JOB') throw new Error('基础鼓励等级错误');
 if (test.praiseForEffect('pop', 4, 2) !== 'NICE') throw new Error('二级鼓励等级错误');
