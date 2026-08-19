@@ -55,7 +55,7 @@ function request(method, pathname, body, token) {
       res.on('end', () => {
         let parsed = {};
         try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = raw; }
-        resolve({ status: res.statusCode, body: parsed });
+        resolve({ status: res.statusCode, body: parsed, headers: res.headers, raw });
       });
     });
     req.on('error', reject);
@@ -96,6 +96,11 @@ async function stopServer(child) {
     assert.deepStrictEqual(health.body, {
       app: 'word-spirit-planet', version: '0.3.0', ok: true
     });
+
+    const backgroundMusic = await request('GET', '/assets/snake-countdown-bgm.mp3');
+    assert.strictEqual(backgroundMusic.status, 200, '背景音乐资源必须可通过静态服务访问');
+    assert(backgroundMusic.raw.length > 0, '背景音乐响应不能为空');
+    assert(/^audio\/(?:mpeg|mp3)(?:;|$)/i.test(String(backgroundMusic.headers['content-type'] || '')), '背景音乐必须返回音频 Content-Type');
 
     const sessionsBefore = JSON.parse(fs.readFileSync(sessionFile, 'utf8')).sessions.length;
     const registered = await request('POST', '/api/register', account);

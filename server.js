@@ -95,7 +95,7 @@ function sanitizeMistakes(input, current = {}) {
   );
 }
 function serveFile(res, file) {
-  const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png' };
+  const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.mp3': 'audio/mpeg' };
   fs.readFile(file, (error, data) => {
     if (error) { res.writeHead(404); res.end('Not found'); return; }
     res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream' });
@@ -205,6 +205,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/textbook-words.generated.js') return serveFile(res, path.join(ROOT, 'textbook-words.generated.js'));
     if (req.method === 'GET' && url.pathname === '/curriculum.js') return serveFile(res, path.join(ROOT, 'curriculum.js'));
     if (req.method === 'GET' && url.pathname === '/styles.css') return serveFile(res, path.join(ROOT, 'styles.css'));
+    if (req.method === 'GET' && url.pathname === '/assets/snake-countdown-bgm.mp3') return serveFile(res, path.join(ROOT, 'assets', 'snake-countdown-bgm.mp3'));
     if (req.method === 'GET' && url.pathname === '/assets/word-spirit.png') return serveFile(res, path.join(ROOT, 'assets', 'word-spirit.png'));
     if (req.method === 'GET' && url.pathname === '/assets/alphabet-jungle.png') return serveFile(res, path.join(ROOT, 'assets', 'alphabet-jungle.png'));
     if (req.method === 'GET' && url.pathname === '/assets/morning-town.png') return serveFile(res, path.join(ROOT, 'assets', 'morning-town.png'));
