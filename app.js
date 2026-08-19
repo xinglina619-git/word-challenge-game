@@ -441,6 +441,25 @@ function createLearningUtterance(word, voices = systemVoices()) {
   line.voice = selectVoiceForRole(voicePool, 'learning');
   return line;
 }
+function selectVoiceForLanguage(voices = [], language = 'zh') {
+  const prefix = `${language}`.toLowerCase();
+  return voices.find(voice => `${voice.lang || ''}`.toLowerCase().startsWith(prefix))
+    || voices.find(voice => language === 'zh' && /xiaoxiao|huihui|yaoyao|chinese|mandarin/i.test(voice.name || ''))
+    || null;
+}
+function createMeaningUtterance(text, voices = systemVoices()) {
+  const line = new SpeechSynthesisUtterance(text);
+  line.lang = 'zh-CN';
+  line.rate = .86;
+  line.pitch = 1.08;
+  line.volume = 1;
+  line.voiceRole = 'meaning';
+  line.voice = selectVoiceForLanguage(cacheSystemVoices(voices), 'zh');
+  return line;
+}
+function createLearningUtterances(record, voices = systemVoices()) {
+  return [createLearningUtterance(record.word, voices), createMeaningUtterance(record.zh, voices)];
+}
 function createPraiseUtterance(praise, excludedURI = lastLearningVoiceURI, voices = systemVoices()) {
   const voicePool = cacheSystemVoices(voices);
   const profile = PRAISE_VOICE_PROFILES[praise] || PRAISE_VOICE_PROFILES.GOOD;
@@ -682,8 +701,6 @@ function newGame(level) {
     busy: false,
     effect: '',
     exploding: [],
-    meaningFlash: null,
-    memoryWords: [],
     learnedTypes: [],
     coverageGoal: coverageGoalFor(words),
     praise: '',
@@ -751,7 +768,6 @@ function expandedRemoval(lines, board) {
 async function settleBoard(game, removed, depth = 0) {
   collapseBoard(game, removed);
   game.exploding = [];
-  game.meaningFlash = null;
   game.praise = '';
   render();
   await sleep(560);
@@ -762,16 +778,14 @@ async function settleBoard(game, removed, depth = 0) {
     game.score += next.removed.size * 4;
     game.effect = 'cascade';
     game.exploding = [...next.removed];
-    announceElimination(game, cascadeTypes, true);
+    announceElimination(game, cascadeTypes);
     game.praise = playPraise(next.special || 'cascade', next.removed.size, depth + 2);
     soundSpecial(next.special || 'pop', next.removed.size);
     render();
-    await flyMeaningToMemory(game, 1500);
     return settleBoard(game, next.removed, depth + 1);
   }
   game.effect = '';
   game.exploding = [];
-  game.meaningFlash = null;
   game.praise = '';
   if (!possibleMoves(game.board).length) game.board = makeBoard(game.words);
 }
@@ -790,13 +804,11 @@ function recordMastered(word) {
     if (mistake.correctStreak >= 2) delete p.mistakes[word.word];
   }
 }
-async function speakWords(words) {
-  if (!state.audio.speech || !('speechSynthesis' in window) || !words.length) return;
-  await waitForSystemVoices();
+async function speakWords(records) {
+  if (!state.audio.speech || !('speechSynthesis' in window) || !records.length) return;
+  const voices = await waitForSystemVoices();
   window.speechSynthesis.cancel();
-  words.slice(0, 3).forEach((word, index) => {
-    const line = createLearningUtterance(word);
-    line.pitch += index * .025;
+  records.slice(0, 3).flatMap(record => createLearningUtterances(record, voices)).forEach((line, index) => {
     if (!index) lastLearningVoiceURI = line.voice?.voiceURI || '';
     window.speechSynthesis.speak(line);
   });
@@ -815,29 +827,12 @@ function playPraise(kind, count, combo) {
   speakPraiseFallback(praise);
   return praise;
 }
-function announceElimination(game, types, cascade = false) {
+function announceElimination(game, types) {
   const learned = types.map(type => game.words[type]).filter(Boolean);
   if (!learned.length) return;
   game.learnedTypes = [...new Set([...game.learnedTypes, ...types])];
-  game.meaningFlash = { words: learned.slice(0, 3), cascade };
   learned.forEach(recordMastered);
-  speakWords(learned.map(item => item.word));
-}
-async function flyMeaningToMemory(game, hold = 1500) {
-  await sleep(hold);
-  if (!game.meaningFlash) return;
-  const words = game.meaningFlash.words;
-  game.meaningFlash = { ...game.meaningFlash, flying: true };
-  render();
-  await sleep(520);
-  game.effect = '';
-  game.exploding = [];
-  game.praise = '';
-  game.memoryWords = [...words, ...game.memoryWords]
-    .filter((word, index, all) => all.findIndex(item => item.word === word.word) === index)
-    .slice(0, 3);
-  game.meaningFlash = null;
-  render();
+  speakWords(learned);
 }
 async function selectCell(index) {
   const game = state.game;
@@ -918,7 +913,6 @@ async function selectCell(index) {
   }
   game.praise = playPraise(game.effect, expanded.removed.size, game.combo);
   render();
-  await flyMeaningToMemory(game, game.effect === 'coin-burst' ? 1800 : 1500);
   await settleBoard(game, expanded.removed);
   game.busy = false;
   if (levelComplete(game)) return finishLevel(true);
@@ -1001,7 +995,6 @@ async function selectPair(index) {
   }
   render();
   await sleep(correct ? (game.effect === 'coin-burst' ? 760 : 520) : 480);
-  if (correct) game.memoryWords = [game.words[card.type]];
   game.effect = '';
   game.exploding = [];
   game.praise = '';
@@ -1256,30 +1249,12 @@ function tileFaceHtml(tile, word) {
   const text = tile.face === 'zh' ? word.zh : word.word;
   return `<span class="tile-text ${tile.face}">${esc(text)}</span>`;
 }
-function memoryInline(game) {
-  const label = '本次学习词';
-  if (!game.memoryWords.length) {
-    return `<div class="target-memory-slot empty"><small>${label}</small><span>消除后显示单词与中文</span></div>`;
-  }
-  return `<div class="target-memory-slot has-word"><small>${label}</small><div>${game.memoryWords.map(word => {
-    const icon = word.icon || visualForWord(word.word);
-    return `<div class="memory-word">${icon ? `<span class="memory-icon" aria-hidden="true">${icon}</span>` : ''}<b>${esc(word.word)}</b><em>${esc(word.zh)}</em><button type="button" data-speak-word="${esc(word.word)}" aria-label="再次朗读 ${esc(word.word)}">🔊 再听</button></div>`;
-  }).join('')}</div></div>`;
-}
 function gameView() {
   const game = state.game;
   const p = normalizedProgress();
   if (!game) return homeView();
   return shell(`<main class="game-page">
     <div class="game-head"><button data-action="leave-game">‹</button><div><b>第 ${game.level} 关 · ${game.grade}年级</b><span>${game.mode === 'match3' ? `${game.score}/${game.scoreGoal} 目标积分` : `${game.done}/${game.goal} 个配对`}</span></div><div><b>${game.moves}</b><span>剩余步数</span></div></div>
-    <section class="target-card ${game.mode}">
-      ${spiritFigure(`target-spirit ${game.combo >= 5 ? 'excited' : ''}`)}
-      ${game.mode === 'match3'
-        ? `<div class="target-summary"><small>自由三消积分关</small><h1>目标 ${game.scoreGoal} 分</h1><button class="score-chip">当前 ${game.score} 分</button><span class="coverage-chip">已学 ${game.learnedTypes.length}/${game.coverageGoal}</span></div>`
-        : `<div class="target-summary"><small>${game.mission.name}</small><h1>找到中英搭档</h1><button data-action="pair-rule">中文＋英文</button></div>`}
-      ${memoryInline(game)}
-      <div class="combo"><b>${game.combo}</b><span>连击</span></div>
-    </section>
     <div class="goal-progress"><i style="width:${Math.min(100, game.mode === 'match3' ? game.score / game.scoreGoal * 100 : game.done / game.goal * 100)}%"></i></div>
     <p class="game-message">${esc(game.message)}</p>
     <section class="${game.mode === 'match3' ? 'board' : 'pair-board'} ${game.effect}" style="--types:${game.words.length}">
@@ -1288,7 +1263,6 @@ function gameView() {
         return `<button class="tile type-${tile.type} ${game.selected === index ? 'selected' : ''} ${game.hintCells.includes(index) ? 'hint' : ''} ${game.tutorial?.active && game.tutorial.cells.includes(index) ? 'tutorial-focus' : ''} ${game.exploding.includes(index) ? 'exploding' : ''}" data-cell="${index}" ${game.busy ? 'disabled' : ''}>${tileFaceHtml(tile, word)}</button>`;
       }).join('') : game.pairs.map((card, index) => `<button class="pair-card ${card.lang} type-${card.type} ${game.selected === index ? 'selected' : ''} ${game.hintCells.includes(index) ? 'hint' : ''} ${game.tutorial?.active && game.tutorial.cells.includes(index) ? 'tutorial-focus' : ''} ${card.matched ? 'matched' : ''} ${game.exploding.includes(index) ? 'exploding' : ''}" data-pair="${index}" aria-label="${esc(card.text)}" ${game.busy || card.matched ? 'disabled' : ''}>${pairFace(card, game.words[card.type])}</button>`).join('')}
       ${effectLayer(game)}
-      ${game.meaningFlash ? `<div class="meaning-pop ${game.meaningFlash.cascade ? 'cascade-word' : ''} ${game.meaningFlash.flying ? 'flying' : ''}"><small>${game.meaningFlash.cascade ? '连锁学习' : '本次消除'}</small>${game.meaningFlash.words.map(word => `<div><b>${esc(word.word)}</b><span>${esc(word.zh)}</span></div>`).join('')}</div>` : ''}
       ${game.effect === 'coin-burst' ? '<div class="coin-explosion"><b>五星连捷！</b><span>🪙 +15</span></div>' : ''}
     </section>${tutorialLayer(game)}
     <div class="tools">
@@ -1296,7 +1270,7 @@ function gameView() {
       <button data-action="shuffle"><b>🔀 ${p.inventory.shuffle}</b><span>${game.mode === 'match3' ? '重排' : '重新摆放'}</span></button>
       <button data-action="add-moves"><b>＋5 ${p.inventory.addMoves}</b><span>加步数</span></button>
     </div>
-    <div class="score-row"><span>得分 <b>${game.score}</b></span><span>最高连击 <b>${game.maxCombo}</b></span></div>
+    <div class="score-row"><span>得分 <b>${game.score}</b></span><span>当前连击 <b>${game.combo}</b></span><span>最高连击 <b>${game.maxCombo}</b></span></div>
   </main>`, 'game');
 }
 function resultView() {

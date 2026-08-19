@@ -33,16 +33,21 @@ const source = `${fs.readFileSync(path.join(root, 'app.js'), 'utf8')}
 globalThis.__gameTest = {
   newGame, findMatchLines, possibleMoves, expandedRemoval, gradeFor, wordsForLevel, adjacent, swap,
   tileType, makeTile, isMixedMeaningLine,
-  modeForLevel, missionForLevel, praiseForEffect, visualForWord, memoryInline,
+  modeForLevel, missionForLevel, praiseForEffect, visualForWord,
   visualForPairWord: typeof visualForPairWord === 'function' ? visualForPairWord : null,
   spiritMusicThemes: typeof SPIRIT_MUSIC_THEMES === 'undefined' ? null : SPIRIT_MUSIC_THEMES,
   praiseVoiceProfiles: typeof PRAISE_VOICE_PROFILES === 'undefined' ? null : PRAISE_VOICE_PROFILES,
   musicThemeForSpirit: typeof musicThemeForSpirit === 'function' ? musicThemeForSpirit : null,
   selectVoiceForRole: typeof selectVoiceForRole === 'function' ? selectVoiceForRole : null,
+  selectVoiceForLanguage: typeof selectVoiceForLanguage === 'function' ? selectVoiceForLanguage : null,
   cacheSystemVoices: typeof cacheSystemVoices === 'function' ? cacheSystemVoices : null,
   createLearningUtterance: typeof createLearningUtterance === 'function' ? createLearningUtterance : null,
+  createMeaningUtterance: typeof createMeaningUtterance === 'function' ? createMeaningUtterance : null,
+  createLearningUtterances: typeof createLearningUtterances === 'function' ? createLearningUtterances : null,
   createPraiseUtterance: typeof createPraiseUtterance === 'function' ? createPraiseUtterance : null,
   gameState: state,
+  gameView: typeof gameView === 'function' ? gameView : null,
+  tileFaceHtml: typeof tileFaceHtml === 'function' ? tileFaceHtml : null,
   authView: typeof authView === 'function' ? authView : null,
   authSubmitLabel: typeof authSubmitLabel === 'function' ? authSubmitLabel : null,
   applyRegistrationSuccess: typeof applyRegistrationSuccess === 'function' ? applyRegistrationSuccess : null,
@@ -154,7 +159,8 @@ for (const word of praiseWords) {
 if (!test.selectVoiceForRole) throw new Error('Independent learning/praise voice selection is missing');
 const fakeVoices = [
   { name: 'Microsoft Ana Online', lang: 'en-US', voiceURI: 'voice-learning' },
-  { name: 'Microsoft Zira Desktop', lang: 'en-US', voiceURI: 'voice-praise' }
+  { name: 'Microsoft Zira Desktop', lang: 'en-US', voiceURI: 'voice-praise' },
+  { name: 'Microsoft Xiaoxiao', lang: 'zh-CN', voiceURI: 'voice-chinese' }
 ];
 const learningVoice = test.selectVoiceForRole(fakeVoices, 'learning');
 const praiseVoice = test.selectVoiceForRole(fakeVoices, 'praise', learningVoice?.voiceURI);
@@ -173,6 +179,11 @@ const cachedPraiseLine = test.createPraiseUtterance('AMAZING', cachedLearningLin
 if (!cachedLearningLine.voice || !cachedPraiseLine.voice || cachedLearningLine.voice.voiceURI === cachedPraiseLine.voice.voiceURI) {
   throw new Error('Voice cache does not keep learning and praise voices separate when getVoices() is initially empty');
 }
+if (!test.createMeaningUtterance || !test.createLearningUtterances) throw new Error('中英文朗读构建器缺失');
+const bilingual = test.createLearningUtterances({ word: 'apple', zh: '苹果' }, fakeVoices);
+if (bilingual.length !== 2 || bilingual[0].text !== 'apple' || bilingual[0].lang !== 'en-US') throw new Error('英文朗读项不正确');
+if (bilingual[1].text !== '苹果' || bilingual[1].lang !== 'zh-CN') throw new Error('中文朗读项不正确');
+if (bilingual[1].voice?.voiceURI !== 'voice-chinese') throw new Error('中文朗读项没有选择中文语音');
 const expectedTextbookCounts = { 1: 110, 2: 120, 3: 308, 5: 316 };
 for (const [grade, count] of Object.entries(expectedTextbookCounts)) {
   if (context.window.TEXTBOOK_WORDS.grades[grade].length !== count) throw new Error(`Grade ${grade} textbook count changed unexpectedly`);
@@ -245,16 +256,15 @@ const clearPairPictures = ['apple', 'carrot', 'dog', 'pencil', 'hamburger'];
 if (clearPairPictures.some(word => !test.visualForPairWord(word))) throw new Error('Clear concrete pair words should use pictures');
 const ambiguousPairWords = ['breakfast', 'lunch', 'dinner', 'dance', 'teacher', 'weather'];
 if (ambiguousPairWords.some(word => test.visualForPairWord(word))) throw new Error('Ambiguous pair words should stay as Chinese text');
-const memorySlot = test.memoryInline({ mode: 'match3', memoryWords: [{ word: 'dance', zh: '跳舞' }] });
-const pairMemorySlot = test.memoryInline({ mode: 'pair', memoryWords: [{ word: 'dance', zh: '跳舞' }] });
-if (!memorySlot.includes('target-memory-slot') || !memorySlot.includes('本次学习词') || !memorySlot.includes('dance') || !memorySlot.includes('跳舞')) {
-  throw new Error('Latest eliminated word is not rendered in the target-card memory slot');
+if ('memoryInline' in test) throw new Error('学习卡渲染函数仍然被导出');
+if (!test.gameView || !test.tileFaceHtml) throw new Error('游戏渲染接口不完整');
+test.gameState.game = test.newGame(2);
+const gameHtml = test.gameView();
+if (gameHtml.includes('target-card') || gameHtml.includes('target-memory-slot') || gameHtml.includes('meaning-pop')) {
+  throw new Error('游戏顶部学习区或消除后学习卡仍在渲染');
 }
-if (!pairMemorySlot.includes('target-memory-slot') || !pairMemorySlot.includes('本次学习词') || !pairMemorySlot.includes('dance') || !pairMemorySlot.includes('跳舞')) {
-  throw new Error('Latest paired word is not rendered in the target-card memory slot');
-}
-const richMemorySlot = test.memoryInline({ memoryWords: [{ word: 'pencil', zh: '铅笔', icon: '✏️' }] });
-if (!richMemorySlot.includes('✏️') || !richMemorySlot.includes('data-speak-word="pencil"')) throw new Error('学习卡缺少图示或再次朗读动作');
+if (!gameHtml.includes('剩余步数') || !gameHtml.includes('最高连击')) throw new Error('删除学习区后必要状态信息缺失');
+if (!gameHtml.includes('tile-text') && !gameHtml.includes('tile-picture')) throw new Error('三消展示面没有渲染');
 const minimumPictureCoverage = { 1: .78, 2: .75, 3: .30, 5: .45 };
 for (const [grade, minimum] of Object.entries(minimumPictureCoverage)) {
   const words = context.window.TEXTBOOK_WORDS.grades[grade];
