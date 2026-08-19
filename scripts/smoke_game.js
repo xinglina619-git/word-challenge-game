@@ -32,6 +32,7 @@ vm.runInContext(fs.readFileSync(path.join(root, 'curriculum.js'), 'utf8'), conte
 const source = `${fs.readFileSync(path.join(root, 'app.js'), 'utf8')}
 globalThis.__gameTest = {
   newGame, findMatchLines, possibleMoves, expandedRemoval, gradeFor, wordsForLevel, adjacent, swap,
+  tileType, makeTile, isMixedMeaningLine,
   modeForLevel, missionForLevel, praiseForEffect, visualForWord, memoryInline,
   visualForPairWord: typeof visualForPairWord === 'function' ? visualForPairWord : null,
   spiritMusicThemes: typeof SPIRIT_MUSIC_THEMES === 'undefined' ? null : SPIRIT_MUSIC_THEMES,
@@ -183,14 +184,31 @@ for (const [level, grade] of levels) {
   if (game.board.length !== 36) throw new Error(`Level ${level} board size is invalid`);
   if (test.findMatchLines(game.board).length) throw new Error(`Level ${level} starts with an automatic match`);
   if (!test.possibleMoves(game.board).length) throw new Error(`Level ${level} has no possible move`);
+  if (game.mode === 'match3' && game.board.some(tile => !Number.isInteger(tile.type) || !['en', 'zh', 'image'].includes(tile.face))) {
+    throw new Error(`Level ${level} contains an invalid mixed-meaning tile`);
+  }
+  for (const move of test.possibleMoves(game.board).slice(0, 5)) {
+    if (!test.findMatchLines(test.swap(game.board, move.a, move.b)).length) throw new Error(`Level ${level} exposes an invalid hint move`);
+  }
   if (game.mode === 'pair' && (!game.target?.word || !game.target?.zh)) throw new Error(`Level ${level} pair target is invalid`);
   if (game.mode === 'match3' && (!game.scoreGoal || game.target !== null)) throw new Error(`Level ${level} score-mode setup is invalid`);
 }
 
-const board = Array.from({ length: 36 }, (_, index) => index % 6);
-board[0] = 2;
-board[1] = 2;
-board[2] = 2;
+const boardWith = cells => {
+  const board = Array.from({ length: 36 }, (_, index) => ({ type: index + 10, face: 'en' }));
+  cells.forEach((tile, index) => { board[index] = tile; });
+  return board;
+};
+const en0 = { type: 0, face: 'en' };
+const zh0 = { type: 0, face: 'zh' };
+const image0 = { type: 0, face: 'image' };
+
+if (!test.findMatchLines(boardWith([en0, en0, zh0])).length) throw new Error('英文与中文混合三连应可消除');
+if (!test.findMatchLines(boardWith([en0, en0, image0])).length) throw new Error('英文与图片混合三连应可消除');
+if (test.findMatchLines(boardWith([en0, en0, en0])).length) throw new Error('纯英文三连不应消除');
+if (test.findMatchLines(boardWith([zh0, image0, zh0])).length) throw new Error('只有释义侧的三连不应消除');
+
+const board = boardWith([{ type: 2, face: 'en' }, { type: 2, face: 'zh' }, { type: 2, face: 'en' }]);
 const lines = test.findMatchLines(board);
 if (!lines.some(line => line.includes(0) && line.length >= 3)) throw new Error('Three-match detection failed');
 

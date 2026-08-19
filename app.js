@@ -540,6 +540,19 @@ function makePairs(words) {
 }
 
 const SIZE = 6;
+function tileType(tile) { return typeof tile === 'object' ? tile.type : tile; }
+function tileFace(tile) { return typeof tile === 'object' ? tile.face : 'en'; }
+function faceChoicesForWord(word) {
+  return visualForPairWord(word.word) ? ['en', 'zh', 'image'] : ['en', 'zh'];
+}
+function makeTile(type, words) {
+  const faces = faceChoicesForWord(words[type]);
+  return { type, face: faces[Math.floor(Math.random() * faces.length)] };
+}
+function isMixedMeaningLine(line, board) {
+  const faces = line.map(index => tileFace(board[index]));
+  return faces.includes('en') && faces.some(face => face !== 'en');
+}
 function indexOf(row, col) { return row * SIZE + col; }
 function cellOf(index) { return { row: Math.floor(index / SIZE), col: index % SIZE }; }
 function adjacent(a, b) {
@@ -556,7 +569,7 @@ function findMatchLines(board) {
   for (let row = 0; row < SIZE; row += 1) {
     let start = 0;
     for (let col = 1; col <= SIZE; col += 1) {
-      if (col < SIZE && board[indexOf(row, col)] === board[indexOf(row, start)]) continue;
+      if (col < SIZE && tileType(board[indexOf(row, col)]) === tileType(board[indexOf(row, start)])) continue;
       if (board[indexOf(row, start)] != null && col - start >= 3) {
         lines.push(Array.from({ length: col - start }, (_, i) => indexOf(row, start + i)));
       }
@@ -566,24 +579,24 @@ function findMatchLines(board) {
   for (let col = 0; col < SIZE; col += 1) {
     let start = 0;
     for (let row = 1; row <= SIZE; row += 1) {
-      if (row < SIZE && board[indexOf(row, col)] === board[indexOf(start, col)]) continue;
+      if (row < SIZE && tileType(board[indexOf(row, col)]) === tileType(board[indexOf(start, col)])) continue;
       if (board[indexOf(start, col)] != null && row - start >= 3) {
         lines.push(Array.from({ length: row - start }, (_, i) => indexOf(start + i, col)));
       }
       start = row;
     }
   }
-  return lines;
+  return lines.filter(line => isMixedMeaningLine(line, board));
 }
 function possibleMoves(board) {
   const moves = [];
   for (let index = 0; index < board.length; index += 1) {
     const { row, col } = cellOf(index);
     for (const next of [col < SIZE - 1 ? index + 1 : -1, row < SIZE - 1 ? index + SIZE : -1]) {
-      if (next < 0 || board[index] === board[next]) continue;
+      if (next < 0 || tileType(board[index]) === tileType(board[next])) continue;
       const changed = swap(board, index, next);
       const lines = findMatchLines(changed);
-      if (lines.length) moves.push({ a: index, b: next, words: [...new Set(lines.map(line => changed[line[0]]))] });
+      if (lines.length) moves.push({ a: index, b: next, words: [...new Set(lines.map(line => tileType(changed[line[0]])))] });
     }
   }
   return moves;
@@ -612,25 +625,26 @@ function unlearnedMove(game) {
   const learned = new Set(game.learnedTypes);
   return possibleMoves(game.board).find(move => move.words.some(type => !learned.has(type))) || null;
 }
-function makeBoard(wordCount) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+function makeBoard(words) {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
     const board = [];
     for (let index = 0; index < SIZE * SIZE; index += 1) {
       const { row, col } = cellOf(index);
       const blocked = new Set();
-      if (col >= 2 && board[index - 1] === board[index - 2]) blocked.add(board[index - 1]);
-      if (row >= 2 && board[index - SIZE] === board[index - SIZE * 2]) blocked.add(board[index - SIZE]);
-      const choices = Array.from({ length: wordCount }, (_, i) => i).filter(i => !blocked.has(i));
-      board.push(choices[Math.floor(Math.random() * choices.length)]);
+      if (col >= 2 && tileType(board[index - 1]) === tileType(board[index - 2])) blocked.add(tileType(board[index - 1]));
+      if (row >= 2 && tileType(board[index - SIZE]) === tileType(board[index - SIZE * 2])) blocked.add(tileType(board[index - SIZE]));
+      const choices = words.map((_, type) => type).filter(type => !blocked.has(type));
+      const type = choices[Math.floor(Math.random() * choices.length)];
+      board.push(makeTile(type, words));
     }
     if (possibleMoves(board).length) return board;
   }
-  return Array.from({ length: SIZE * SIZE }, (_, i) => i % wordCount);
+  throw new Error('无法生成含有中英混合消除机会的棋盘');
 }
 function chooseTarget(game) {
   let moves = possibleMoves(game.board);
   if (!moves.length) {
-    game.board = makeBoard(game.words.length);
+    game.board = makeBoard(game.words);
     moves = possibleMoves(game.board);
   }
   const move = moves[Math.floor(Math.random() * moves.length)];
@@ -649,7 +663,7 @@ function newGame(level) {
     mode,
     mission,
     words,
-    board: makeBoard(words.length),
+    board: makeBoard(words),
     pairs: makePairs(words),
     target: null,
     targetType: 0,
@@ -704,7 +718,8 @@ function collapseBoard(game, removed) {
       if (value != null) kept.push(value);
     }
     for (let row = SIZE - 1, i = 0; row >= 0; row -= 1, i += 1) {
-      board[indexOf(row, col)] = i < kept.length ? kept[i] : Math.floor(Math.random() * game.words.length);
+      const type = Math.floor(Math.random() * game.words.length);
+      board[indexOf(row, col)] = i < kept.length ? kept[i] : makeTile(type, game.words);
     }
   }
   game.board = board;
@@ -715,8 +730,8 @@ function expandedRemoval(lines, board) {
   const longest = Math.max(...lines.map(line => line.length));
   if (longest >= 5) {
     special = 'rainbow';
-    const type = board[lines.find(line => line.length === longest)[0]];
-    board.forEach((value, index) => { if (value === type) removed.add(index); });
+    const type = tileType(board[lines.find(line => line.length === longest)[0]]);
+    board.forEach((value, index) => { if (tileType(value) === type) removed.add(index); });
   } else if (longest >= 4) {
     special = 'rocket';
     const anchor = cellOf(lines.find(line => line.length === longest)[1]);
@@ -743,7 +758,7 @@ async function settleBoard(game, removed, depth = 0) {
   const cascades = findMatchLines(game.board);
   if (cascades.length && depth < 6) {
     const next = expandedRemoval(cascades, game.board);
-    const cascadeTypes = [...new Set(cascades.map(line => game.board[line[0]]))];
+    const cascadeTypes = [...new Set(cascades.map(line => tileType(game.board[line[0]])))];
     game.score += next.removed.size * 4;
     game.effect = 'cascade';
     game.exploding = [...next.removed];
@@ -758,7 +773,7 @@ async function settleBoard(game, removed, depth = 0) {
   game.exploding = [];
   game.meaningFlash = null;
   game.praise = '';
-  if (!possibleMoves(game.board).length) game.board = makeBoard(game.words.length);
+  if (!possibleMoves(game.board).length) game.board = makeBoard(game.words);
 }
 function recordMistake(word) {
   const p = normalizedProgress();
@@ -882,7 +897,7 @@ async function selectCell(index) {
 
   completeTutorial(game);
   game.moves -= 1;
-  const matchedTypes = new Set(lines.map(line => game.board[line[0]]));
+  const matchedTypes = new Set(lines.map(line => tileType(game.board[line[0]])));
   const expanded = expandedRemoval(lines, game.board);
   const comboBonus = Math.min(50, game.combo * 5);
   game.score += expanded.removed.size * 12 + comboBonus;
@@ -913,7 +928,7 @@ async function selectCell(index) {
     const move = unlearnedMove(game);
     if (move) game.hintCells = [move.a, move.b];
     else {
-      game.board = makeBoard(game.words.length);
+      game.board = makeBoard(game.words);
       const retry = unlearnedMove(game);
       game.hintCells = retry ? [retry.a, retry.b] : [];
     }
@@ -1051,7 +1066,7 @@ function shuffleGame() {
     game.selected = null;
     game.hintCells = [];
   } else {
-    game.board = makeBoard(game.words.length);
+    game.board = makeBoard(game.words);
     game.hintCells = [];
   }
   persistProgress().catch(() => {});
@@ -1234,6 +1249,13 @@ function pairFace(card, word) {
   if (picture) return `<small>看图配词</small><span class="pair-picture" role="img" aria-label="${esc(word.zh)}">${picture}</span>`;
   return `<small>${card.lang === 'en' ? 'English' : '中文'}</small><b>${esc(card.text)}</b>`;
 }
+function tileFaceHtml(tile, word) {
+  if (tile.face === 'image') {
+    return `<span class="tile-picture" role="img" aria-label="${esc(word.zh)}">${visualForPairWord(word.word)}</span>`;
+  }
+  const text = tile.face === 'zh' ? word.zh : word.word;
+  return `<span class="tile-text ${tile.face}">${esc(text)}</span>`;
+}
 function memoryInline(game) {
   const label = '本次学习词';
   if (!game.memoryWords.length) {
@@ -1261,9 +1283,9 @@ function gameView() {
     <div class="goal-progress"><i style="width:${Math.min(100, game.mode === 'match3' ? game.score / game.scoreGoal * 100 : game.done / game.goal * 100)}%"></i></div>
     <p class="game-message">${esc(game.message)}</p>
     <section class="${game.mode === 'match3' ? 'board' : 'pair-board'} ${game.effect}" style="--types:${game.words.length}">
-      ${game.mode === 'match3' ? game.board.map((type, index) => {
-        const word = game.words[type];
-        return `<button class="tile type-${type} ${game.selected === index ? 'selected' : ''} ${game.hintCells.includes(index) ? 'hint' : ''} ${game.tutorial?.active && game.tutorial.cells.includes(index) ? 'tutorial-focus' : ''} ${game.exploding.includes(index) ? 'exploding' : ''}" data-cell="${index}" ${game.busy ? 'disabled' : ''}><span>${esc(word.word)}</span><small>${word.icon || '✦'}</small></button>`;
+      ${game.mode === 'match3' ? game.board.map((tile, index) => {
+        const word = game.words[tile.type];
+        return `<button class="tile type-${tile.type} ${game.selected === index ? 'selected' : ''} ${game.hintCells.includes(index) ? 'hint' : ''} ${game.tutorial?.active && game.tutorial.cells.includes(index) ? 'tutorial-focus' : ''} ${game.exploding.includes(index) ? 'exploding' : ''}" data-cell="${index}" ${game.busy ? 'disabled' : ''}>${tileFaceHtml(tile, word)}</button>`;
       }).join('') : game.pairs.map((card, index) => `<button class="pair-card ${card.lang} type-${card.type} ${game.selected === index ? 'selected' : ''} ${game.hintCells.includes(index) ? 'hint' : ''} ${game.tutorial?.active && game.tutorial.cells.includes(index) ? 'tutorial-focus' : ''} ${card.matched ? 'matched' : ''} ${game.exploding.includes(index) ? 'exploding' : ''}" data-pair="${index}" aria-label="${esc(card.text)}" ${game.busy || card.matched ? 'disabled' : ''}>${pairFace(card, game.words[card.type])}</button>`).join('')}
       ${effectLayer(game)}
       ${game.meaningFlash ? `<div class="meaning-pop ${game.meaningFlash.cascade ? 'cascade-word' : ''} ${game.meaningFlash.flying ? 'flying' : ''}"><small>${game.meaningFlash.cascade ? '连锁学习' : '本次消除'}</small>${game.meaningFlash.words.map(word => `<div><b>${esc(word.word)}</b><span>${esc(word.zh)}</span></div>`).join('')}</div>` : ''}
