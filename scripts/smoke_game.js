@@ -19,6 +19,11 @@ const context = {
   SpeechSynthesisUtterance: class SpeechSynthesisUtterance {
     constructor(text) { this.text = text; }
   },
+  Audio: class Audio {
+    constructor(src) { this.src = src; this.loop = false; this.currentTime = 0; this.paused = true; }
+    play() { this.paused = false; return Promise.resolve(); }
+    pause() { this.paused = true; }
+  },
   setTimeout,
   clearTimeout,
   setInterval: () => 1,
@@ -35,9 +40,11 @@ globalThis.__gameTest = {
   tileType, makeTile, isMixedMeaningLine,
   modeForLevel, missionForLevel, praiseForEffect, visualForWord,
   visualForPairWord: typeof visualForPairWord === 'function' ? visualForPairWord : null,
-  spiritMusicThemes: typeof SPIRIT_MUSIC_THEMES === 'undefined' ? null : SPIRIT_MUSIC_THEMES,
+  backgroundMusicSrc: typeof BACKGROUND_MUSIC_SRC === 'undefined' ? null : BACKGROUND_MUSIC_SRC,
+  backgroundMusic: typeof backgroundMusic === 'undefined' ? null : backgroundMusic,
+  startMusic: typeof startMusic === 'function' ? startMusic : null,
+  stopMusic: typeof stopMusic === 'function' ? stopMusic : null,
   praiseVoiceProfiles: typeof PRAISE_VOICE_PROFILES === 'undefined' ? null : PRAISE_VOICE_PROFILES,
-  musicThemeForSpirit: typeof musicThemeForSpirit === 'function' ? musicThemeForSpirit : null,
   selectVoiceForRole: typeof selectVoiceForRole === 'function' ? selectVoiceForRole : null,
   selectVoiceForLanguage: typeof selectVoiceForLanguage === 'function' ? selectVoiceForLanguage : null,
   cacheSystemVoices: typeof cacheSystemVoices === 'function' ? cacheSystemVoices : null,
@@ -143,18 +150,13 @@ const home = test.homeView();
 if (!home.includes('继续学习') || !home.includes('成长奖励')) throw new Error('首页没有区分学习和奖励入口');
 if (home.indexOf('继续学习') > home.indexOf('成长奖励')) throw new Error('首页没有优先展示学习入口');
 if (!home.includes('开始消除')) throw new Error('首页主学习按钮缺失');
-const spiritIds = ['lingling', 'sprout', 'bubble', 'candy', 'spark', 'cloud', 'moon', 'rainbow'];
-if (!test.spiritMusicThemes || !test.musicThemeForSpirit) throw new Error('Spirit music themes are not configured');
-const themeSignatures = spiritIds.map(id => {
-  const theme = test.musicThemeForSpirit(id);
-  if (!theme?.melody?.length || !theme?.bass?.length || !theme?.beat || !theme?.loopMs) throw new Error(`Spirit "${id}" has an incomplete music theme`);
-  return `${theme.beat}|${theme.wave}|${theme.melody.join(',')}|${theme.bass.join(',')}`;
-});
-if (new Set(themeSignatures).size !== spiritIds.length) throw new Error('Each spirit must have a distinct music theme');
-const praiseWords = ['GOOD', 'GREAT', 'EXCELLENT', 'AMAZING', 'UNBELIEVABLE', 'BONUS TIME'];
-if (!test.praiseVoiceProfiles || praiseWords.some(word => !test.praiseVoiceProfiles[word])) throw new Error('Praise voice profiles are incomplete');
-for (const word of praiseWords) {
-  if (test.praiseVoiceProfiles[word].cheerBursts < 2) throw new Error(`Praise cheer layer is incomplete for "${word}"`);
+if (test.backgroundMusicSrc !== '/assets/snake-countdown-bgm.mp3') throw new Error('背景音乐资源路径不正确');
+if (!test.backgroundMusic?.loop) throw new Error('背景音乐没有循环播放');
+if (!fs.existsSync(path.join(root, 'assets', 'snake-countdown-bgm.mp3'))) throw new Error('背景音乐文件缺失');
+const praiseWords = ['GOOD JOB', 'NICE', 'GREAT', 'EXCELLENT', 'UNBELIEVABLE'];
+if (!test.praiseVoiceProfiles || praiseWords.some(word => !test.praiseVoiceProfiles[word])) throw new Error('五级鼓励词配置不完整');
+for (const removed of ['GOOD', 'AMAZING', 'BONUS TIME']) {
+  if (test.praiseVoiceProfiles[removed]) throw new Error(`旧鼓励词 ${removed} 未删除`);
 }
 if (!test.selectVoiceForRole) throw new Error('Independent learning/praise voice selection is missing');
 const fakeVoices = [
@@ -167,15 +169,17 @@ const praiseVoice = test.selectVoiceForRole(fakeVoices, 'praise', learningVoice?
 if (!learningVoice || !praiseVoice || learningVoice.voiceURI === praiseVoice.voiceURI) throw new Error('Learning and praise must select separate system voices');
 if (!test.createLearningUtterance || !test.createPraiseUtterance) throw new Error('Independent learning/praise utterance builders are missing');
 const learningLine = test.createLearningUtterance('dance', fakeVoices);
-const praiseLine = test.createPraiseUtterance('AMAZING', learningLine.voice?.voiceURI, fakeVoices);
+const praiseLine = test.createPraiseUtterance('EXCELLENT', learningLine.voice?.voiceURI, fakeVoices);
 if (learningLine.voiceRole !== 'learning' || praiseLine.voiceRole !== 'praise') throw new Error('Speech roles are not separated');
 if (!learningLine.voice || !praiseLine.voice || learningLine.voice.voiceURI === praiseLine.voice.voiceURI) throw new Error('Learning and praise utterances use the same system voice');
 if (learningLine.pitch === praiseLine.pitch && learningLine.rate === praiseLine.rate) throw new Error('Cartoon praise profile must differ from learning pronunciation');
 if (!praiseLine.text.endsWith('!')) throw new Error('Praise utterance must use an enthusiastic exclamation');
+const fallbackPraiseLine = test.createPraiseUtterance('UNKNOWN', learningLine.voice?.voiceURI, fakeVoices);
+if (fallbackPraiseLine.rate !== test.praiseVoiceProfiles['GOOD JOB'].rate) throw new Error('鼓励词回退配置不正确');
 if (!test.cacheSystemVoices) throw new Error('System voice cache is missing');
 test.cacheSystemVoices(fakeVoices);
 const cachedLearningLine = test.createLearningUtterance('dance', []);
-const cachedPraiseLine = test.createPraiseUtterance('AMAZING', cachedLearningLine.voice?.voiceURI, []);
+const cachedPraiseLine = test.createPraiseUtterance('EXCELLENT', cachedLearningLine.voice?.voiceURI, []);
 if (!cachedLearningLine.voice || !cachedPraiseLine.voice || cachedLearningLine.voice.voiceURI === cachedPraiseLine.voice.voiceURI) {
   throw new Error('Voice cache does not keep learning and praise voices separate when getVoices() is initially empty');
 }
@@ -231,7 +235,11 @@ const pairGame = test.newGame(3);
 if (matchGame.mode !== 'match3' || pairGame.mode !== 'pair') throw new Error('Alternating game modes failed');
 if (pairGame.pairs.length !== pairGame.words.length * 2) throw new Error('Pair-card generation failed');
 if (test.missionForLevel(5).type !== 'treasure' || test.missionForLevel(10).type !== 'boss') throw new Error('Mission cadence failed');
-if (test.praiseForEffect('pop', 3, 1) !== 'GOOD' || test.praiseForEffect('rocket', 8, 2) !== 'AMAZING' || test.praiseForEffect('rainbow', 12, 4) !== 'UNBELIEVABLE' || test.praiseForEffect('coin-burst', 9, 5) !== 'BONUS TIME') throw new Error('Praise intensity ladder failed');
+if (test.praiseForEffect('pop', 3, 1) !== 'GOOD JOB') throw new Error('基础鼓励等级错误');
+if (test.praiseForEffect('pop', 4, 2) !== 'NICE') throw new Error('二级鼓励等级错误');
+if (test.praiseForEffect('cascade', 6, 3) !== 'GREAT') throw new Error('三级鼓励等级错误');
+if (test.praiseForEffect('rocket', 8, 3) !== 'EXCELLENT') throw new Error('四级鼓励等级错误');
+if (test.praiseForEffect('rainbow', 12, 4) !== 'UNBELIEVABLE') throw new Error('五级鼓励等级错误');
 const expectedPictures = {
   apple: '\u{1F34E}',
   tooth: '\u{1F9B7}',

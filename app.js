@@ -14,61 +14,19 @@ const SPIRITS = [
   { id: 'rainbow', name: '彩虹灵', rarity: '传说', asset: '/assets/spirit-rainbow-v2.png', skill: '五连奖励翻倍' }
 ];
 
-const SPIRIT_MUSIC_THEMES = {
-  lingling: {
-    name: '星光启程', beat: .50, loopMs: 4000, wave: 'triangle', accentWave: 'square',
-    melody: [659, 784, 880, 1047, 880, 784, 698, 784, 659, 784, 988, 1175, 988, 880, 784, 1047],
-    bass: [131, 196, 147, 220], harmony: [523, 659, 784, 659, 587, 698, 784, 880]
-  },
-  sprout: {
-    name: '萌芽森林', beat: .58, loopMs: 4640, wave: 'sine', accentWave: 'triangle',
-    melody: [523, 659, 784, 659, 587, 698, 784, 880, 784, 698, 659, 587, 523, 587, 659, 784],
-    bass: [131, 165, 147, 196], harmony: [392, 523, 587, 523, 440, 587, 659, 587]
-  },
-  bubble: {
-    name: '泡泡水湾', beat: .46, loopMs: 3680, wave: 'sine', accentWave: 'sine',
-    melody: [784, 988, 1175, 988, 880, 1047, 1319, 1047, 784, 880, 988, 1175, 1047, 988, 880, 784],
-    bass: [196, 247, 220, 262], harmony: [587, 784, 880, 784, 659, 880, 988, 880]
-  },
-  candy: {
-    name: '糖果巡游', beat: .44, loopMs: 3520, wave: 'triangle', accentWave: 'square',
-    melody: [659, 880, 1047, 1319, 1175, 1047, 880, 988, 784, 988, 1175, 1397, 1319, 1175, 988, 880],
-    bass: [165, 220, 196, 247], harmony: [523, 659, 784, 880, 659, 784, 880, 988]
-  },
-  spark: {
-    name: '火花电台', beat: .42, loopMs: 3360, wave: 'sawtooth', accentWave: 'triangle',
-    melody: [587, 784, 988, 1175, 784, 1047, 1319, 988, 659, 880, 1109, 1319, 988, 1175, 880, 784],
-    bass: [147, 196, 165, 220], harmony: [440, 587, 659, 784, 523, 659, 784, 880]
-  },
-  cloud: {
-    name: '云朵漫步', beat: .62, loopMs: 4960, wave: 'sine', accentWave: 'triangle',
-    melody: [523, 659, 784, 880, 784, 659, 587, 659, 698, 784, 880, 988, 880, 784, 698, 659],
-    bass: [131, 175, 147, 196], harmony: [392, 523, 659, 523, 440, 587, 698, 587]
-  },
-  moon: {
-    name: '月光摇篮', beat: .68, loopMs: 5440, wave: 'triangle', accentWave: 'sine',
-    melody: [440, 523, 659, 523, 494, 587, 698, 587, 440, 494, 587, 659, 587, 523, 494, 440],
-    bass: [110, 147, 123, 165], harmony: [330, 440, 494, 440, 370, 494, 523, 494]
-  },
-  rainbow: {
-    name: '彩虹庆典', beat: .40, loopMs: 3200, wave: 'triangle', accentWave: 'square',
-    melody: [784, 988, 1175, 1568, 1319, 1175, 988, 1319, 880, 1047, 1319, 1760, 1568, 1319, 1175, 988],
-    bass: [196, 262, 220, 294], harmony: [587, 784, 880, 988, 659, 880, 988, 1175]
-  }
-};
+const BACKGROUND_MUSIC_SRC = '/assets/snake-countdown-bgm.mp3';
+const backgroundMusic = new Audio(BACKGROUND_MUSIC_SRC);
+backgroundMusic.loop = true;
+backgroundMusic.preload = 'auto';
+backgroundMusic.volume = .28;
 
 const PRAISE_VOICE_PROFILES = {
-  GOOD: { rate: 1.05, pitch: 1.42, volume: .90, chime: [784, 988], cheerBursts: 2 },
-  GREAT: { rate: 1.03, pitch: 1.46, volume: .92, chime: [784, 988, 1175], cheerBursts: 2 },
-  EXCELLENT: { rate: .98, pitch: 1.50, volume: .94, chime: [659, 880, 1175, 1397], cheerBursts: 3 },
-  AMAZING: { rate: .94, pitch: 1.54, volume: .96, chime: [784, 1047, 1319, 1568], cheerBursts: 3 },
-  UNBELIEVABLE: { rate: .88, pitch: 1.58, volume: .98, chime: [659, 988, 1319, 1760, 1976], cheerBursts: 4 },
-  'BONUS TIME': { rate: .96, pitch: 1.52, volume: 1, chime: [784, 1175, 1568, 1976, 2349], cheerBursts: 5 }
+  'GOOD JOB': { rate: 1.05, pitch: 1.42, volume: .90, chime: [784, 988], cheerBursts: 2 },
+  NICE: { rate: 1.04, pitch: 1.45, volume: .92, chime: [784, 988, 1175], cheerBursts: 2 },
+  GREAT: { rate: 1.01, pitch: 1.48, volume: .94, chime: [659, 880, 1175], cheerBursts: 3 },
+  EXCELLENT: { rate: .96, pitch: 1.52, volume: .96, chime: [659, 880, 1175, 1397], cheerBursts: 3 },
+  UNBELIEVABLE: { rate: .88, pitch: 1.58, volume: .98, chime: [659, 988, 1319, 1760, 1976], cheerBursts: 4 }
 };
-
-function musicThemeForSpirit(id) {
-  return SPIRIT_MUSIC_THEMES[id] || SPIRIT_MUSIC_THEMES.lingling;
-}
 
 function selectVoiceForRole(voices = [], role = 'learning', excludedURI = '') {
   const english = voices.filter(voice => /^en([-_]|$)/i.test(voice.lang || '') || /english/i.test(voice.name || ''));
@@ -181,9 +139,6 @@ const GRADED = window.GAME_CONTENT.gradedMain;
 const GRADE4 = window.GAME_CONTENT.grade4Book.units;
 const TEXTBOOK = window.TEXTBOOK_WORDS?.grades || {};
 let audioContext;
-let bgmTimer;
-let currentMusicThemeId = 'lingling';
-const bgmNodes = new Set();
 
 function esc(value = '') {
   return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
@@ -312,91 +267,20 @@ function soundDraw(rarity) {
     [523, 659, 784].forEach((note, i) => tone(note, i * .08, .2, 'sine', .05));
   }
 }
-function trackBgmNode(node) {
-  bgmNodes.add(node);
-  node.addEventListener?.('ended', () => bgmNodes.delete(node), { once: true });
-  return node;
+function startMusic() {
+  if (!state.audio.music || !backgroundMusic.paused) return;
+  backgroundMusic.play().catch(() => {});
 }
-function bgmTone(frequency, start, duration, type, volume) {
-  try {
-    audioContext ||= new AudioContext();
-    audioContext.resume();
-    const now = audioContext.currentTime;
-    const oscillator = trackBgmNode(audioContext.createOscillator());
-    const gain = audioContext.createGain();
-    oscillator.type = type;
-    oscillator.frequency.setValueAtTime(frequency, now + start);
-    gain.gain.setValueAtTime(.001, now + start);
-    gain.gain.exponentialRampToValueAtTime(volume, now + start + .018);
-    gain.gain.exponentialRampToValueAtTime(.001, now + start + duration);
-    oscillator.connect(gain).connect(audioContext.destination);
-    oscillator.start(now + start);
-    oscillator.stop(now + start + duration + .03);
-  } catch {}
-}
-function bgmNoise(start, duration, volume) {
-  try {
-    audioContext ||= new AudioContext();
-    const buffer = audioContext.createBuffer(1, Math.floor(audioContext.sampleRate * duration), audioContext.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < data.length; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
-    const source = trackBgmNode(audioContext.createBufferSource());
-    const gain = audioContext.createGain();
-    gain.gain.value = volume;
-    source.buffer = buffer;
-    source.connect(gain).connect(audioContext.destination);
-    source.start(audioContext.currentTime + start);
-  } catch {}
-}
-function clearScheduledBgm() {
-  bgmNodes.forEach(node => {
-    try { node.stop(); } catch {}
-  });
-  bgmNodes.clear();
-}
-function scheduleMusic(themeId = currentMusicThemeId) {
-  if (!state.audio.music) return;
-  const theme = musicThemeForSpirit(themeId);
-  const beat = theme.beat;
-  const leadVolume = theme.wave === 'sawtooth' ? .012 : .019;
-  theme.melody.forEach((note, i) => bgmTone(note, i * beat / 2, .15, i % 4 === 3 ? theme.accentWave : theme.wave, leadVolume));
-  theme.bass.forEach((note, i) => bgmTone(note, i * beat * 2, beat * .82, 'sine', .016));
-  theme.harmony.forEach((note, i) => bgmTone(note, i * beat, .12, theme.accentWave, .008));
-  for (let i = 0; i < 16; i += 1) {
-    if (i % 4 === 0) bgmTone(78 + (themeId === 'bubble' ? 18 : 0), i * beat / 2, .12, 'sine', .027);
-    if (i % 4 === 2) bgmNoise(i * beat / 2, .07, .012);
-    if (themeId === 'spark' || themeId === 'rainbow') bgmNoise(i * beat / 2 + beat * .24, .02, .004);
-  }
-}
-function stopMusic() {
-  clearInterval(bgmTimer);
-  bgmTimer = null;
-  clearScheduledBgm();
-}
-function startMusic(themeId = activeSpirit().id) {
-  const nextThemeId = SPIRIT_MUSIC_THEMES[themeId] ? themeId : 'lingling';
-  if (!state.audio.music) {
-    currentMusicThemeId = nextThemeId;
-    return;
-  }
-  if (bgmTimer && currentMusicThemeId === nextThemeId) return;
-  stopMusic();
-  currentMusicThemeId = nextThemeId;
-  const theme = musicThemeForSpirit(nextThemeId);
-  scheduleMusic(nextThemeId);
-  bgmTimer = setInterval(() => scheduleMusic(currentMusicThemeId), theme.loopMs);
-}
-function restartMusicForSpirit(id) {
-  const nextThemeId = SPIRIT_MUSIC_THEMES[id] ? id : 'lingling';
-  if (state.audio.music) startMusic(nextThemeId);
-  else currentMusicThemeId = nextThemeId;
+function stopMusic(reset = false) {
+  backgroundMusic.pause();
+  if (reset) backgroundMusic.currentTime = 0;
 }
 function toggleAudioChannel(channel) {
   if (!['music', 'effects', 'speech'].includes(channel)) return;
   state.audio[channel] = !state.audio[channel];
   localStorage.setItem(`word_spirit_${channel}`, state.audio[channel] ? 'on' : 'off');
   if (channel === 'music') {
-    if (state.audio.music) startMusic(activeSpirit().id); else stopMusic();
+    if (state.audio.music) startMusic(); else stopMusic();
   }
   render();
 }
@@ -462,7 +346,7 @@ function createLearningUtterances(record, voices = systemVoices()) {
 }
 function createPraiseUtterance(praise, excludedURI = lastLearningVoiceURI, voices = systemVoices()) {
   const voicePool = cacheSystemVoices(voices);
-  const profile = PRAISE_VOICE_PROFILES[praise] || PRAISE_VOICE_PROFILES.GOOD;
+  const profile = PRAISE_VOICE_PROFILES[praise] || PRAISE_VOICE_PROFILES['GOOD JOB'];
   const line = new SpeechSynthesisUtterance(`${praise}!`);
   line.lang = 'en-US';
   line.rate = profile.rate;
@@ -473,7 +357,7 @@ function createPraiseUtterance(praise, excludedURI = lastLearningVoiceURI, voice
   return line;
 }
 function soundPraiseCue(praise) {
-  const profile = PRAISE_VOICE_PROFILES[praise] || PRAISE_VOICE_PROFILES.GOOD;
+  const profile = PRAISE_VOICE_PROFILES[praise] || PRAISE_VOICE_PROFILES['GOOD JOB'];
   profile.chime.forEach((note, index) => tone(note, index * .055, .18 + index * .018, 'triangle', .035 + index * .004));
   for (let index = 0; index < profile.cheerBursts; index += 1) {
     const start = .08 + index * .105;
@@ -814,12 +698,11 @@ async function speakWords(records) {
   });
 }
 function praiseForEffect(kind, count = 3, combo = 1) {
-  if (kind === 'coin-burst') return 'BONUS TIME';
-  if (kind === 'rainbow') return 'UNBELIEVABLE';
-  if (kind === 'rocket' || kind === 'burst' || count >= 9) return 'AMAZING';
-  if (kind === 'cascade' || combo >= 3 || count >= 6) return 'EXCELLENT';
-  if (combo >= 2 || count >= 4) return 'GREAT';
-  return 'GOOD';
+  if (kind === 'rainbow' || combo >= 5) return 'UNBELIEVABLE';
+  if (kind === 'coin-burst' || kind === 'rocket' || kind === 'burst' || count >= 9) return 'EXCELLENT';
+  if (kind === 'cascade' || combo >= 3 || count >= 6) return 'GREAT';
+  if (combo >= 2 || count >= 4) return 'NICE';
+  return 'GOOD JOB';
 }
 function playPraise(kind, count, combo) {
   const praise = praiseForEffect(kind, count, combo);
@@ -1428,10 +1311,10 @@ async function equipSpirit(id) {
   const p = normalizedProgress();
   if (!p.spirits[id]) return;
   p.equipped = id;
-  restartMusicForSpirit(id);
+  startMusic();
   soundCombo(growthStage(p.spirits[id]));
   try { await persistProgress(); } catch {}
-  toast(`${spiritById(id).name}已加入，主题曲「${musicThemeForSpirit(id).name}」开始播放`);
+  toast(`${spiritById(id).name}已加入，继续学习吧！`);
 }
 async function buyItem(id, price) {
   const p = normalizedProgress();
@@ -1463,7 +1346,7 @@ async function loadUser() {
   render();
 }
 
-document.addEventListener('pointerdown', () => startMusic(activeSpirit().id), { once: true });
+document.addEventListener('pointerdown', () => startMusic(), { once: true });
 document.addEventListener('click', async event => {
   const speakButton = event.target.closest('[data-speak-word]');
   if (speakButton) return speakWord(speakButton.dataset.speakWord);
@@ -1533,7 +1416,7 @@ document.addEventListener('click', async event => {
   }
   if (action === 'logout') {
     try { await api('/api/logout', { method: 'POST' }); } catch {}
-    stopMusic();
+    stopMusic(true);
     state.token = null;
     state.user = null;
     localStorage.removeItem('word_spirit_token');
@@ -1562,8 +1445,8 @@ document.addEventListener('submit', async event => {
       state.token = data.token;
       localStorage.setItem('word_spirit_token', data.token);
       state.user = data.user;
-      const progress = normalizedProgress();
-      restartMusicForSpirit(progress.equipped);
+      normalizedProgress();
+      startMusic();
       state.auth.busy = false;
       state.view = 'home';
       render();
@@ -1585,8 +1468,8 @@ document.addEventListener('submit', async event => {
       state.token = data.token;
       localStorage.setItem('word_spirit_token', data.token);
       state.user = data.user;
-      const progress = normalizedProgress();
-      restartMusicForSpirit(progress.equipped);
+      normalizedProgress();
+      startMusic();
       state.auth.busy = false;
       state.view = 'home';
       render();
