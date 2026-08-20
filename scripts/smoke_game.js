@@ -4,17 +4,39 @@ const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
 let focusedSelector = '';
+let systemVoicesForTest = [];
+let speechCancelCount = 0;
+const spokenLines = [];
+const documentListeners = new Map();
+async function dispatchDocumentEvent(type, event) {
+  const listeners = [...(documentListeners.get(type) || [])];
+  for (const listener of listeners) {
+    if (listener.once) documentListeners.set(type, (documentListeners.get(type) || []).filter(item => item !== listener));
+    await listener.callback(event);
+  }
+}
 const appElement = { innerHTML: '' };
 const context = {
   console,
-  window: {},
+  window: {
+    speechSynthesis: {
+      getVoices: () => systemVoicesForTest,
+      addEventListener: () => {},
+      speak: line => { spokenLines.push(line); },
+      cancel: () => { speechCancelCount += 1; }
+    }
+  },
   localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
   document: {
     querySelector: selector => selector === '#app'
       ? appElement
       : { focus: () => { focusedSelector = selector; } },
     querySelectorAll: () => [],
-    addEventListener: () => {}
+    addEventListener: (type, callback, options = {}) => {
+      const listeners = documentListeners.get(type) || [];
+      listeners.push({ callback, once: Boolean(options?.once) });
+      documentListeners.set(type, listeners);
+    }
   },
   SpeechSynthesisUtterance: class SpeechSynthesisUtterance {
     constructor(text) { this.text = text; }
@@ -37,6 +59,7 @@ vm.runInContext(fs.readFileSync(path.join(root, 'curriculum.js'), 'utf8'), conte
 const source = `${fs.readFileSync(path.join(root, 'app.js'), 'utf8')}
 globalThis.__gameTest = {
   newGame, starsForGame, findMatchLines, possibleMoves, expandedRemoval, gradeFor, wordsForLevel, adjacent, swap,
+  chooseTarget,
   tileType, makeTile, isMixedMeaningLine,
   modeForLevel, missionForLevel, praiseForEffect, visualForWord,
   visualForPairWord: typeof visualForPairWord === 'function' ? visualForPairWord : null,
@@ -44,6 +67,7 @@ globalThis.__gameTest = {
   backgroundMusic: typeof backgroundMusic === 'undefined' ? null : backgroundMusic,
   startMusic: typeof startMusic === 'function' ? startMusic : null,
   stopMusic: typeof stopMusic === 'function' ? stopMusic : null,
+  toggleAudioChannel: typeof toggleAudioChannel === 'function' ? toggleAudioChannel : null,
   praiseVoiceProfiles: typeof PRAISE_VOICE_PROFILES === 'undefined' ? null : PRAISE_VOICE_PROFILES,
   selectVoiceForRole: typeof selectVoiceForRole === 'function' ? selectVoiceForRole : null,
   selectVoiceForLanguage: typeof selectVoiceForLanguage === 'function' ? selectVoiceForLanguage : null,
@@ -52,6 +76,12 @@ globalThis.__gameTest = {
   createMeaningUtterance: typeof createMeaningUtterance === 'function' ? createMeaningUtterance : null,
   createLearningUtterances: typeof createLearningUtterances === 'function' ? createLearningUtterances : null,
   createPraiseUtterance: typeof createPraiseUtterance === 'function' ? createPraiseUtterance : null,
+  speakWords: typeof speakWords === 'function' ? speakWords : null,
+  speakWord: typeof speakWord === 'function' ? speakWord : null,
+  cancelSpeech: typeof cancelSpeech === 'function' ? cancelSpeech : null,
+  selectPair: typeof selectPair === 'function' ? selectPair : null,
+  useHint: typeof useHint === 'function' ? useHint : null,
+  settleBoard: typeof settleBoard === 'function' ? settleBoard : null,
   gameState: state,
   gameView: typeof gameView === 'function' ? gameView : null,
   tileFaceHtml: typeof tileFaceHtml === 'function' ? tileFaceHtml : null,
@@ -150,6 +180,13 @@ const home = test.homeView();
 if (!home.includes('继续学习') || !home.includes('成长奖励')) throw new Error('首页没有区分学习和奖励入口');
 if (home.indexOf('继续学习') > home.indexOf('成长奖励')) throw new Error('首页没有优先展示学习入口');
 if (!home.includes('开始消除')) throw new Error('首页主学习按钮缺失');
+if (!home.includes('自动依次朗读英文和中文') || !home.includes('词块随后直接消失')) throw new Error('首次首页没有准确说明消除后的双语自动朗读与直接消失');
+if (home.includes('再听') || home.includes('弹出')) throw new Error('首次首页仍承诺已移除的重听卡或弹出反馈');
+test.gameState.user.progress.collected = ['apple'];
+test.gameState.tip = 1;
+const rotatingTipHome = test.homeView();
+if (!rotatingTipHome.includes('自动依次朗读英文和中文') || !rotatingTipHome.includes('词块随后直接消失')) throw new Error('轮播帮助没有准确说明消除后的双语自动朗读与直接消失');
+if (rotatingTipHome.includes('再听') || rotatingTipHome.includes('弹出')) throw new Error('轮播帮助仍承诺已移除的重听卡或弹出反馈');
 if (test.backgroundMusicSrc !== '/assets/snake-countdown-bgm.mp3') throw new Error('背景音乐资源路径不正确');
 if (!test.backgroundMusic?.loop) throw new Error('背景音乐没有循环播放');
 if (!fs.existsSync(path.join(root, 'assets', 'snake-countdown-bgm.mp3'))) throw new Error('背景音乐文件缺失');
@@ -222,6 +259,32 @@ if (!test.findMatchLines(boardWith([en0, en0, zh0])).length) throw new Error('�
 if (!test.findMatchLines(boardWith([en0, en0, image0])).length) throw new Error('英文与图片混合三连应可消除');
 if (test.findMatchLines(boardWith([en0, en0, en0])).length) throw new Error('纯英文三连不应消除');
 if (test.findMatchLines(boardWith([zh0, image0, zh0])).length) throw new Error('只有释义侧的三连不应消除');
+
+const sameTypeDifferentFaceBoard = boardWith([
+  { type: 0, face: 'en' },
+  { type: 0, face: 'en' },
+  { type: 0, face: 'en' },
+  ...Array.from({ length: 5 }, (_, index) => ({ type: index + 20, face: 'en' })),
+  { type: 0, face: 'zh' }
+]);
+if (test.findMatchLines(sameTypeDifferentFaceBoard).length) throw new Error('确定性交换夹具在交换前不应已有有效消除');
+const faceChangingMove = test.possibleMoves(sameTypeDifferentFaceBoard).find(move => move.a === 2 && move.b === 8);
+if (!faceChangingMove) throw new Error('提示逻辑漏掉同词不同展示面的有效交换');
+const faceChangedBoard = test.swap(sameTypeDifferentFaceBoard, faceChangingMove.a, faceChangingMove.b);
+if (!test.findMatchLines(faceChangedBoard).some(line => line.includes(0) && line.includes(1) && line.includes(2))) {
+  throw new Error('同词不同展示面的候选交换没有产生真实混合三连');
+}
+const faceChangingGame = test.newGame(2);
+faceChangingGame.board = sameTypeDifferentFaceBoard;
+test.chooseTarget(faceChangingGame);
+if (faceChangingGame.board !== sameTypeDifferentFaceBoard) throw new Error('含同词不同展示面有效交换的棋盘被误判为死盘并重建');
+test.gameState.game = faceChangingGame;
+test.gameState.view = 'login';
+test.useHint();
+if (faceChangingGame.hintCells.join(',') !== '2,8') throw new Error('提示道具没有选中同词不同展示面的有效交换');
+const identicalFaceBoard = [...sameTypeDifferentFaceBoard];
+identicalFaceBoard[8] = { type: 0, face: 'en' };
+if (test.possibleMoves(identicalFaceBoard).some(move => move.a === 2 && move.b === 8)) throw new Error('完全相同 type+face 的交换不应成为候选移动');
 
 const board = boardWith([{ type: 2, face: 'en' }, { type: 2, face: 'zh' }, { type: 2, face: 'en' }]);
 const lines = test.findMatchLines(board);
@@ -299,6 +362,7 @@ for (const [grade, minimum] of Object.entries(minimumPictureCoverage)) {
 }
 
 const styles = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
+if (styles.includes('.memory-strip')) throw new Error('已无渲染入口的 memory-strip 死样式仍然存在');
 const tutorialCardRule = styles.match(/\.tutorial-card\{[^}]*\}/)?.[0] || '';
 const tutorialPulseRule = styles.match(/@keyframes tutorial-pulse\{[\s\S]*?\}\}/)?.[0] || '';
 if (!tutorialCardRule.includes('top:16px') || tutorialCardRule.includes('bottom:')) {
@@ -308,4 +372,111 @@ if (tutorialPulseRule.includes('transform:')) {
   throw new Error('教学高亮动画不能移动可点击目标');
 }
 
-console.log('GAME_SMOKE=PASS levels=7 board=6x6 match3=PASS pair=PASS missions=PASS praise=PASS pictures=PASS rainbow=PASS audio=PASS tutorial=PASS coverage=PASS auth=PASS register-status=PASS');
+async function runAsyncRegressionTests() {
+  if (!test.settleBoard) throw new Error('棋盘结算接口缺失');
+  faceChangingGame.board = sameTypeDifferentFaceBoard;
+  const playableBoardSnapshot = JSON.stringify(faceChangingGame.board);
+  test.gameState.game = faceChangingGame;
+  test.gameState.view = 'login';
+  await test.settleBoard(faceChangingGame, new Set());
+  if (JSON.stringify(faceChangingGame.board) !== playableBoardSnapshot) throw new Error('结算阶段把仍有同词不同展示面有效交换的棋盘误重排');
+
+  if (!test.speakWords || !test.speakWord) throw new Error('语音队列接口缺失');
+  systemVoicesForTest = [{ name: 'Microsoft Ana Online', lang: 'en-US', voiceURI: 'voice-learning' }];
+  test.cacheSystemVoices(systemVoicesForTest);
+  spokenLines.length = 0;
+  const cancelBeforeAutomaticBatches = speechCancelCount;
+  await test.speakWords([{ word: 'apple', zh: '苹果' }]);
+  await test.speakWords([{ word: 'banana', zh: '香蕉' }]);
+  if (speechCancelCount !== cancelBeforeAutomaticBatches) throw new Error('后续自动消除批次取消了前一批双语朗读');
+  if (spokenLines.map(line => `${line.text}:${line.lang}`).join('|') !== 'apple:en-US|苹果:zh-CN|banana:en-US|香蕉:zh-CN') {
+    throw new Error('连续自动消除批次没有按英文、中文顺序串行入队');
+  }
+  if (spokenLines[1].voice !== null || spokenLines[3].voice !== null) throw new Error('缺少中文音色时未使用无指定音色的中文朗读降级');
+
+  const cancelBeforeReplay = speechCancelCount;
+  await test.speakWord('pear');
+  if (speechCancelCount !== cancelBeforeReplay + 1 || spokenLines.at(-1)?.text !== 'pear') {
+    throw new Error('用户主动重播没有明确取消旧队列并播放新单词');
+  }
+
+  if (!test.selectPair) throw new Error('配对交互接口缺失');
+  const pairFlowGame = test.newGame(3);
+  pairFlowGame.tutorial = { active: false, mode: 'pair', cells: [], step: 0 };
+  pairFlowGame.goal = 1;
+  pairFlowGame.pairs = [
+    { type: 0, lang: 'en', text: pairFlowGame.words[0].word, matched: false },
+    { type: 1, lang: 'zh', text: pairFlowGame.words[1].zh, matched: false },
+    { type: 0, lang: 'zh', text: pairFlowGame.words[0].zh, matched: false }
+  ];
+  test.gameState.game = pairFlowGame;
+  test.gameState.view = 'game';
+  await test.selectPair(0);
+  await test.selectPair(1);
+  if (pairFlowGame.pairMistakes !== 1 || pairFlowGame.done !== 0) throw new Error('错误配对没有计入一次失误并保持未完成');
+  await test.selectPair(0);
+  await test.selectPair(2);
+  if (pairFlowGame.done !== 1 || !test.gameState.result?.win || test.gameState.result.stars !== 2) {
+    throw new Error('一次失误后的正确配对没有完成关卡并结算为二星');
+  }
+
+  const actionEvent = action => ({
+    target: { closest: selector => selector === '[data-action]' ? { dataset: { action } } : null }
+  });
+  if (!test.startMusic || !test.stopMusic || !test.toggleAudioChannel) throw new Error('背景音乐控制接口缺失');
+  let musicPlayAttempts = 0;
+  let rejectNextMusicPlay = true;
+  test.backgroundMusic.play = () => {
+    musicPlayAttempts += 1;
+    if (rejectNextMusicPlay) {
+      rejectNextMusicPlay = false;
+      test.backgroundMusic.paused = true;
+      return Promise.reject(new Error('autoplay blocked'));
+    }
+    test.backgroundMusic.paused = false;
+    return Promise.resolve();
+  };
+  test.gameState.audio.music = true;
+  test.stopMusic(true);
+  await dispatchDocumentEvent('pointerdown', { target: {} });
+  await Promise.resolve();
+  if (musicPlayAttempts !== 1 || !test.backgroundMusic.paused) throw new Error('首次音乐播放拒绝夹具无效');
+  await dispatchDocumentEvent('pointerdown', { target: {} });
+  if (musicPlayAttempts !== 2 || test.backgroundMusic.paused) throw new Error('首次播放被拒后，后续用户手势没有重试音乐');
+
+  test.backgroundMusic.currentTime = 37;
+  test.toggleAudioChannel('music');
+  if (!test.backgroundMusic.paused || test.backgroundMusic.currentTime !== 37) throw new Error('关闭音乐没有暂停并保留播放位置');
+  test.toggleAudioChannel('music');
+  if (test.backgroundMusic.paused || test.backgroundMusic.currentTime !== 37) throw new Error('重新开启音乐没有从保留位置恢复');
+
+  test.gameState.game = test.newGame(2);
+  test.gameState.view = 'game';
+  const cancelBeforeLeave = speechCancelCount;
+  await dispatchDocumentEvent('click', actionEvent('leave-game'));
+  if (speechCancelCount !== cancelBeforeLeave + 1) throw new Error('离开关卡没有明确取消双语朗读队列');
+
+  test.gameState.token = 'test-token';
+  test.gameState.user = test.gameState.user || { profile: { nickname: '小测试员' }, progress: {} };
+  test.backgroundMusic.currentTime = 29;
+  const cancelBeforeLogout = speechCancelCount;
+  await dispatchDocumentEvent('click', actionEvent('logout'));
+  if (speechCancelCount !== cancelBeforeLogout + 1) throw new Error('注销没有明确取消双语朗读队列');
+  if (!test.backgroundMusic.paused || test.backgroundMusic.currentTime !== 0) throw new Error('注销没有暂停音乐并归零播放位置');
+
+  test.gameState.audio.music = true;
+  rejectNextMusicPlay = true;
+  const attemptsBeforeLoginPlay = musicPlayAttempts;
+  test.startMusic();
+  await Promise.resolve();
+  if (musicPlayAttempts !== attemptsBeforeLoginPlay + 1 || !test.backgroundMusic.paused) throw new Error('登录后播放拒绝夹具无效');
+  await dispatchDocumentEvent('pointerdown', { target: {} });
+  if (musicPlayAttempts !== attemptsBeforeLoginPlay + 2 || test.backgroundMusic.paused) throw new Error('注销后登录播放被拒时，后续用户手势没有重试音乐');
+}
+
+runAsyncRegressionTests().then(() => {
+  console.log('GAME_SMOKE=PASS levels=7 board=6x6 match3=PASS pair=PASS missions=PASS praise=PASS pictures=PASS rainbow=PASS audio=PASS tutorial=PASS coverage=PASS auth=PASS register-status=PASS');
+}).catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

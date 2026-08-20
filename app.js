@@ -92,7 +92,7 @@ hobby|🎨;children's palace|🏰;a cup of|☕;a bottle of|🍾;starter|🥗;mai
 
 const TIPS = [
   '三消关需要达到目标积分，并认识足够多的不同单词。',
-  '单词消除时会自动朗读，并弹出对应的中文意思。',
+  '单词消除后会自动依次朗读英文和中文，词块随后直接消失。',
   '连续五次消对会触发金币爆发。',
   '四个相同词块会产生更强的范围消除。',
   '听发音时，注意单词开头和结尾的声音。',
@@ -379,6 +379,9 @@ async function speakPraiseFallback(praise) {
   const line = createPraiseUtterance(praise, lastLearningVoiceURI);
   window.speechSynthesis.speak(line);
 }
+function cancelSpeech() {
+  window.speechSynthesis?.cancel?.();
+}
 if ('speechSynthesis' in window) {
   cacheSystemVoices(window.speechSynthesis.getVoices?.() || []);
   window.speechSynthesis.addEventListener?.('voiceschanged', () => {
@@ -391,7 +394,7 @@ async function speakWord(word) {
   await waitForSystemVoices();
   const line = createLearningUtterance(word);
   lastLearningVoiceURI = line.voice?.voiceURI || '';
-  window.speechSynthesis.cancel();
+  cancelSpeech();
   window.speechSynthesis.speak(line);
 }
 
@@ -504,7 +507,10 @@ function possibleMoves(board) {
   for (let index = 0; index < board.length; index += 1) {
     const { row, col } = cellOf(index);
     for (const next of [col < SIZE - 1 ? index + 1 : -1, row < SIZE - 1 ? index + SIZE : -1]) {
-      if (next < 0 || tileType(board[index]) === tileType(board[next])) continue;
+      if (next < 0 || (
+        tileType(board[index]) === tileType(board[next])
+        && tileFace(board[index]) === tileFace(board[next])
+      )) continue;
       const changed = swap(board, index, next);
       const lines = findMatchLines(changed);
       if (lines.length) moves.push({ a: index, b: next, words: [...new Set(lines.map(line => tileType(changed[line[0]])))] });
@@ -700,7 +706,6 @@ function recordMastered(word) {
 async function speakWords(records) {
   if (!state.audio.speech || !('speechSynthesis' in window) || !records.length) return;
   const voices = await waitForSystemVoices();
-  window.speechSynthesis.cancel();
   records.slice(0, 3).flatMap(record => createLearningUtterances(record, voices)).forEach((line, index) => {
     if (!index) lastLearningVoiceURI = line.voice?.voiceURI || '';
     window.speechSynthesis.speak(line);
@@ -1044,7 +1049,7 @@ function homeView() {
   const power = 100 + Object.values(p.spirits).reduce((sum, count) => sum + growthStage(count) * 25, 0) + Object.values(p.inventory).reduce((sum, count) => sum + count * 3, 0);
   const equipped = spiritById(p.equipped);
   const tip = level === 1 && p.collected.length === 0
-    ? '先完成第 1 关，消除后可以再听单词发音。'
+    ? '完成有效消除后会自动依次朗读英文和中文，词块随后直接消失。'
     : TIPS[state.tip];
   return shell(`<main class="home-page">
     <section class="hero">
@@ -1311,6 +1316,7 @@ async function drawCard() {
   render();
 }
 function startLevel(level) {
+  cancelSpeech();
   state.game = newGame(Math.max(1, Math.min(100, level)));
   state.game.tutorial = tutorialForGame(state.game, normalizedProgress());
   state.result = null;
@@ -1356,7 +1362,7 @@ async function loadUser() {
   render();
 }
 
-document.addEventListener('pointerdown', () => startMusic(), { once: true });
+document.addEventListener('pointerdown', () => startMusic());
 document.addEventListener('click', async event => {
   const speakButton = event.target.closest('[data-speak-word]');
   if (speakButton) return speakWord(speakButton.dataset.speakWord);
@@ -1372,6 +1378,7 @@ document.addEventListener('click', async event => {
   if (itemButton && itemButton.dataset.action === 'buy-item') return buyItem(itemButton.dataset.item, Number(itemButton.dataset.price));
   const action = event.target.closest('[data-action]')?.dataset.action;
   if (!action) return;
+  if (state.game && ['home', 'leave-game', 'levels', 'draw', 'collection', 'leaderboard', 'profile'].includes(action)) cancelSpeech();
   if (action === 'switch-login' || action === 'switch-register') {
     if (state.auth.busy) return;
     state.auth.phone = document.querySelector('#auth-form input[name="phone"]')?.value || state.auth.phone;
@@ -1426,6 +1433,7 @@ document.addEventListener('click', async event => {
   }
   if (action === 'logout') {
     try { await api('/api/logout', { method: 'POST' }); } catch {}
+    cancelSpeech();
     stopMusic(true);
     state.token = null;
     state.user = null;
