@@ -69,7 +69,7 @@ function Wait-Health([int]$Port, [string]$ExpectedApp) {
   throw "Fixture did not become ready on port $Port"
 }
 
-function Invoke-Launcher([hashtable]$Environment) {
+function Invoke-Launcher([hashtable]$Environment, [string]$Scenario) {
   $saved = @{}
   $captureRoot = New-TestRoot
   $stdoutFile = Join-Path $captureRoot 'launcher.out.log'
@@ -97,7 +97,8 @@ function Invoke-Launcher([hashtable]$Environment) {
     $knownProcesses.Add($process)
     if (-not $process.WaitForExit(15000)) {
       Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-      throw 'Launcher subprocess did not exit within 15 seconds'
+      $output = (Get-Content -Raw -Encoding UTF8 $stdoutFile -ErrorAction SilentlyContinue) + (Get-Content -Raw -Encoding UTF8 $stderrFile -ErrorAction SilentlyContinue)
+      throw "Launcher subprocess '$Scenario' did not exit within 15 seconds`nCaptured output: $output"
     }
     $process.WaitForExit()
     $exitCode = [int](Get-Content -Raw -Encoding ASCII $exitCodeFile).Trim()
@@ -135,14 +136,14 @@ try {
   $reusePort = Get-FreePort
   $reuseFixture = Start-Fixture $reusePort 'matching'
   Wait-Health $reusePort 'word-spirit-planet' | Out-Null
-  $reuse = Invoke-Launcher ($common + @{ WORD_SPIRIT_LAUNCH_PORT = [string]$reusePort })
+  $reuse = Invoke-Launcher ($common + @{ WORD_SPIRIT_LAUNCH_PORT = [string]$reusePort }) 'reuse'
   Assert-True ($reuse.ExitCode -eq 0) ("Matching health service should be reused; exit=$($reuse.ExitCode)`n" + $reuse.Output)
   Assert-Contains $reuse.Output 'WORD_SPIRIT_REUSED' 'Reuse marker is missing'
   Assert-True (-not $reuseFixture.HasExited) 'Launcher must not terminate a matching service'
   Stop-Process -Id $reuseFixture.Id -Force
 
   $startPort = Get-FreePort
-  $started = Invoke-Launcher ($common + @{ WORD_SPIRIT_LAUNCH_PORT = [string]$startPort })
+  $started = Invoke-Launcher ($common + @{ WORD_SPIRIT_LAUNCH_PORT = [string]$startPort }) 'start'
   $startedPidMatch = [regex]::Match($started.Output, 'WORD_SPIRIT_STARTED_PID=(\d+)')
   if ($startedPidMatch.Success) {
     $startedProcess = Get-Process -Id ([int]$startedPidMatch.Groups[1].Value) -ErrorAction SilentlyContinue
@@ -163,7 +164,7 @@ try {
   $mismatchPort = Get-FreePort
   $mismatchFixture = Start-Fixture $mismatchPort 'mismatch'
   Wait-Health $mismatchPort 'other-service' | Out-Null
-  $mismatch = Invoke-Launcher ($common + @{ WORD_SPIRIT_LAUNCH_PORT = [string]$mismatchPort })
+  $mismatch = Invoke-Launcher ($common + @{ WORD_SPIRIT_LAUNCH_PORT = [string]$mismatchPort }) 'mismatch'
   Assert-True ($mismatch.ExitCode -ne 0) 'Mismatched occupied port must fail'
   Assert-Contains $mismatch.Output 'WORD_SPIRIT_PORT_CONFLICT' 'Port conflict marker is missing'
   Assert-Contains $mismatch.Output (ConvertFrom-TestText '5bey6KKr5YW25LuW5pyN5Yqh5Y2g55So') 'Port conflict must include a Chinese explanation'
@@ -173,7 +174,7 @@ try {
   $missingNode = Invoke-Launcher ($common + @{
     WORD_SPIRIT_LAUNCH_PORT = [string](Get-FreePort)
     WORD_SPIRIT_NODE_PATH = (Join-Path $commonRoot 'missing-node.exe')
-  })
+  }) 'missing-node'
   Assert-True ($missingNode.ExitCode -ne 0) 'Missing Node must fail'
   Assert-Contains $missingNode.Output 'WORD_SPIRIT_NODE_MISSING' 'Missing Node marker is missing'
   Assert-Contains $missingNode.Output (ConvertFrom-TestText '5pyq5om+5YiwIE5vZGUuanM=') 'Missing Node must include a Chinese explanation'
@@ -184,7 +185,7 @@ try {
     WORD_SPIRIT_SERVER_SCRIPT = $fixture
     WORD_SPIRIT_FIXTURE_MODE = 'silent'
     WORD_SPIRIT_START_TIMEOUT_MS = '600'
-  })
+  }) 'health-timeout'
   Assert-True ($timeout.ExitCode -ne 0) 'Health timeout must fail'
   Assert-Contains $timeout.Output 'WORD_SPIRIT_START_TIMEOUT' 'Startup timeout marker is missing'
   Assert-Contains $timeout.Output 'LOG_DIR=' 'Startup timeout must provide the log directory'
