@@ -84,7 +84,9 @@ globalThis.__gameTest = {
   settleBoard: typeof settleBoard === 'function' ? settleBoard : null,
   gameState: state,
   gameView: typeof gameView === 'function' ? gameView : null,
+  faceChoicesForWord: typeof faceChoicesForWord === 'function' ? faceChoicesForWord : null,
   tileFaceHtml: typeof tileFaceHtml === 'function' ? tileFaceHtml : null,
+  pairFace: typeof pairFace === 'function' ? pairFace : null,
   authView: typeof authView === 'function' ? authView : null,
   authSubmitLabel: typeof authSubmitLabel === 'function' ? authSubmitLabel : null,
   applyRegistrationSuccess: typeof applyRegistrationSuccess === 'function' ? applyRegistrationSuccess : null,
@@ -101,6 +103,9 @@ globalThis.__gameTest = {
 vm.runInContext(source, context, { filename: 'app.js' });
 
 const test = context.__gameTest;
+if (!test.faceChoicesForWord || Array.from(test.faceChoicesForWord({ word: 'apple', zh: '苹果' })).join(',') !== 'en,zh') {
+  throw new Error('三消展示面选择仍包含图片');
+}
 if (!test.authView || !test.resetPasswordView) throw new Error('登录与密码恢复视图不完整');
 if (test.gameState.view !== 'login') throw new Error('无有效令牌时应默认显示登录页');
 test.gameState.view = 'login';
@@ -236,8 +241,8 @@ for (const [level, grade] of levels) {
   if (game.board.length !== 36) throw new Error(`Level ${level} board size is invalid`);
   if (test.findMatchLines(game.board).length) throw new Error(`Level ${level} starts with an automatic match`);
   if (!test.possibleMoves(game.board).length) throw new Error(`Level ${level} has no possible move`);
-  if (game.mode === 'match3' && game.board.some(tile => !Number.isInteger(tile.type) || !['en', 'zh', 'image'].includes(tile.face))) {
-    throw new Error(`Level ${level} contains an invalid mixed-meaning tile`);
+  if (game.mode === 'match3' && game.board.some(tile => !Number.isInteger(tile.type) || !['en', 'zh'].includes(tile.face))) {
+    throw new Error(`Level ${level} contains an invalid text-only tile`);
   }
   for (const move of test.possibleMoves(game.board).slice(0, 5)) {
     if (!test.findMatchLines(test.swap(game.board, move.a, move.b)).length) throw new Error(`Level ${level} exposes an invalid hint move`);
@@ -253,12 +258,10 @@ const boardWith = cells => {
 };
 const en0 = { type: 0, face: 'en' };
 const zh0 = { type: 0, face: 'zh' };
-const image0 = { type: 0, face: 'image' };
 
 if (!test.findMatchLines(boardWith([en0, en0, zh0])).length) throw new Error('英文与中文混合三连应可消除');
-if (!test.findMatchLines(boardWith([en0, en0, image0])).length) throw new Error('英文与图片混合三连应可消除');
 if (test.findMatchLines(boardWith([en0, en0, en0])).length) throw new Error('纯英文三连不应消除');
-if (test.findMatchLines(boardWith([zh0, image0, zh0])).length) throw new Error('只有释义侧的三连不应消除');
+if (test.findMatchLines(boardWith([zh0, zh0, zh0])).length) throw new Error('纯中文三连不应消除');
 
 const sameTypeDifferentFaceBoard = boardWith([
   { type: 0, face: 'en' },
@@ -351,7 +354,15 @@ if (gameHtml.includes('target-card') || gameHtml.includes('target-memory-slot') 
   throw new Error('游戏顶部学习区或消除后学习卡仍在渲染');
 }
 if (!gameHtml.includes('剩余步数') || !gameHtml.includes('最高连击')) throw new Error('删除学习区后必要状态信息缺失');
-if (!gameHtml.includes('tile-text') && !gameHtml.includes('tile-picture')) throw new Error('三消展示面没有渲染');
+if (!gameHtml.includes('tile-text')) throw new Error('三消文字展示面没有渲染');
+if (gameHtml.includes('tile-picture')) throw new Error('三消仍在渲染图片方块');
+const legacyImageHtml = test.tileFaceHtml({ type: 0, face: 'image' }, { word: 'apple', zh: '苹果' });
+if (!legacyImageHtml.includes('tile-text zh') || !legacyImageHtml.includes('苹果') || legacyImageHtml.includes('tile-picture')) {
+  throw new Error('旧图片方块没有降级为中文文字');
+}
+if (!test.pairFace || !test.pairFace({ lang: 'zh', text: '苹果' }, { word: 'apple', zh: '苹果' }).includes('pair-picture')) {
+  throw new Error('移除三消图片时误删了配对图片');
+}
 const minimumPictureCoverage = { 1: .78, 2: .75, 3: .30, 5: .45 };
 for (const [grade, minimum] of Object.entries(minimumPictureCoverage)) {
   const words = context.window.TEXTBOOK_WORDS.grades[grade];
@@ -362,6 +373,8 @@ for (const [grade, minimum] of Object.entries(minimumPictureCoverage)) {
 }
 
 const styles = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
+if (styles.includes('.tile-picture')) throw new Error('三消图片死样式仍然存在');
+if (!styles.includes('.pair-picture')) throw new Error('配对图片样式被误删');
 if (styles.includes('.memory-strip')) throw new Error('已无渲染入口的 memory-strip 死样式仍然存在');
 const tutorialCardRule = styles.match(/\.tutorial-card\{[^}]*\}/)?.[0] || '';
 const tutorialPulseRule = styles.match(/@keyframes tutorial-pulse\{[\s\S]*?\}\}/)?.[0] || '';

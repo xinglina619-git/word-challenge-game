@@ -456,8 +456,8 @@ function makePairs(words) {
 const SIZE = 6;
 function tileType(tile) { return typeof tile === 'object' ? tile.type : tile; }
 function tileFace(tile) { return typeof tile === 'object' ? tile.face : 'en'; }
-function faceChoicesForWord(word) {
-  return visualForPairWord(word.word) ? ['en', 'zh', 'image'] : ['en', 'zh'];
+function faceChoicesForWord() {
+  return ['en', 'zh'];
 }
 function makeTile(type, words) {
   const faces = faceChoicesForWord(words[type]);
@@ -1141,11 +1141,9 @@ function pairFace(card, word) {
   return `<small>${card.lang === 'en' ? 'English' : '中文'}</small><b>${esc(card.text)}</b>`;
 }
 function tileFaceHtml(tile, word) {
-  if (tile.face === 'image') {
-    return `<span class="tile-picture" role="img" aria-label="${esc(word.zh)}">${visualForPairWord(word.word)}</span>`;
-  }
-  const text = tile.face === 'zh' ? word.zh : word.word;
-  return `<span class="tile-text ${tile.face}">${esc(text)}</span>`;
+  const face = tile.face === 'en' ? 'en' : 'zh';
+  const text = face === 'zh' ? word.zh : word.word;
+  return `<span class="tile-text ${face}">${esc(text)}</span>`;
 }
 function gameView() {
   const game = state.game;
