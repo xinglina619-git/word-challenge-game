@@ -9,6 +9,7 @@ const { SessionStore, isLoopbackAddress } = require('../session-store');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'word-spirit-auth-'));
 const sessionFile = path.join(tempDir, 'sessions.json');
+const dataFile = path.join(tempDir, 'users.json');
 const first = new SessionStore(sessionFile, { ttlMs: 60_000 });
 const rawToken = first.create('child-1');
 const persisted = fs.readFileSync(sessionFile, 'utf8');
@@ -123,11 +124,77 @@ async function stopServer(child) {
     assert.strictEqual(typeof loggedIn.body.token, 'string');
     assert(loggedIn.body.token.length >= 32);
     const originalToken = loggedIn.body.token;
+    assert.strictEqual(loggedIn.body.user.progress.coins, 30);
+    assert.strictEqual(loggedIn.body.user.progress.tickets, 0);
+    assert.strictEqual(loggedIn.body.user.progress.migrationVersion, 1);
 
+    assert.strictEqual((await request('POST', '/api/pet/adopt', { speciesId: 'invalid', name: '坏坏' }, originalToken)).status, 400);
+    const adopted = await request('POST', '/api/pet/adopt', { speciesId: 'cloud', name: '团团' }, originalToken);
+    assert.strictEqual(adopted.status, 200);
+    assert.strictEqual(adopted.body.user.progress.pet.speciesId, 'cloud');
+    assert.strictEqual(adopted.body.user.progress.pet.name, '团团');
+    const duplicateAdoption = await request('POST', '/api/pet/adopt', { speciesId: 'spark', name: '火火' }, originalToken);
+    assert.strictEqual(duplicateAdoption.status, 409);
+
+    const renamed = await request('PATCH', '/api/pet/name', { name: '云宝' }, originalToken);
+    assert.strictEqual(renamed.status, 200);
+    assert.strictEqual(renamed.body.user.progress.pet.speciesId, 'cloud');
+    assert.strictEqual(renamed.body.user.progress.pet.name, '云宝');
+    assert.strictEqual((await request('PATCH', '/api/pet/name', { name: '<script>' }, originalToken)).status, 400);
+
+    const bought = await request('POST', '/api/shop/purchase', { itemId: 'starBiscuit', operationId: 'buy-1' }, originalToken);
+    assert.strictEqual(bought.status, 200);
+    assert.strictEqual(bought.body.user.progress.coins, 10);
+    assert.strictEqual(bought.body.user.progress.pet.foodInventory.starBiscuit, 1);
+    const duplicateBuy = await request('POST', '/api/shop/purchase', { itemId: 'starBiscuit', operationId: 'buy-1' }, originalToken);
+    assert.strictEqual(duplicateBuy.status, 200);
+    assert.strictEqual(duplicateBuy.body.user.progress.coins, 10);
+    assert.strictEqual(duplicateBuy.body.user.progress.pet.foodInventory.starBiscuit, 1);
+    assert.strictEqual((await request('POST', '/api/shop/purchase', { itemId: 'celebrationCake', operationId: 'buy-2' }, originalToken)).status, 409);
+
+    const fed = await request('POST', '/api/pet/feed', { foodId: 'starBiscuit', operationId: 'feed-1' }, originalToken);
+    assert.strictEqual(fed.status, 200);
+    assert.strictEqual(fed.body.user.progress.pet.growth, 10);
+    assert.strictEqual(fed.body.user.progress.pet.level, 1);
+    assert.strictEqual(fed.body.user.progress.pet.foodInventory.starBiscuit, 0);
+    const duplicateFeed = await request('POST', '/api/pet/feed', { foodId: 'starBiscuit', operationId: 'feed-1' }, originalToken);
+    assert.strictEqual(duplicateFeed.status, 200);
+    assert.strictEqual(duplicateFeed.body.user.progress.pet.growth, 10);
+    assert.strictEqual((await request('POST', '/api/pet/feed', { foodId: 'starBiscuit', operationId: 'feed-2' }, originalToken)).status, 409);
+
+    const spellingReward = await request('POST', '/api/game/complete', {
+      runId: 'run-spelling-1', level: 1, mode: 'spelling', stars: 3, missionType: 'normal', sessionCoins: 0, maxCombo: 0
+    }, originalToken);
+    assert.strictEqual(spellingReward.status, 200);
+    assert.strictEqual(spellingReward.body.reward.coins, 48);
+    assert.strictEqual(spellingReward.body.user.progress.coins, 58);
+    const duplicateReward = await request('POST', '/api/game/complete', {
+      runId: 'run-spelling-1', level: 1, mode: 'spelling', stars: 3, missionType: 'normal', sessionCoins: 0, maxCombo: 0
+    }, originalToken);
+    assert.strictEqual(duplicateReward.status, 200);
+    assert.strictEqual(duplicateReward.body.reward.duplicate, true);
+    assert.strictEqual(duplicateReward.body.user.progress.coins, 58);
+
+    await stopServer(child);
+    const legacyDb = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+    const legacyUser = legacyDb.users.find(item => item.phone === account.phone);
+    legacyUser.progress.coins = 0;
+    legacyUser.progress.tickets = 2;
+    legacyUser.progress.dust = 3;
+    legacyUser.progress.migrationVersion = 0;
+    fs.writeFileSync(dataFile, JSON.stringify(legacyDb, null, 2));
+    child = startServer();
+    await waitForServer();
+    const migrated = await request('GET', '/api/me', null, originalToken);
+    assert.strictEqual(migrated.status, 200);
+    assert.strictEqual(migrated.body.user.progress.coins, 175);
+    assert.strictEqual(migrated.body.user.progress.tickets, 0);
+    assert.strictEqual(migrated.body.user.progress.dust, 0);
+    assert.strictEqual(migrated.body.user.progress.migrationVersion, 1);
     await stopServer(child);
     child = startServer();
     await waitForServer();
-    assert.strictEqual((await request('GET', '/api/me', null, originalToken)).status, 200);
+    assert.strictEqual((await request('GET', '/api/me', null, originalToken)).body.user.progress.coins, 175);
 
     const changed = await request('POST', '/api/password/reset-local', {
       phone: account.phone,
@@ -147,7 +214,7 @@ async function stopServer(child) {
     })).status, 200);
     assert.strictEqual((await request('POST', '/api/logout', null, changed.body.token)).status, 200);
     assert.strictEqual((await request('GET', '/api/me', null, changed.body.token)).status, 401);
-    console.log('AUTH_FLOW=PASS register=PASS login=PASS restart=PASS reset=PASS logout=PASS health=PASS');
+    console.log('AUTH_FLOW=PASS register=PASS login=PASS restart=PASS reset=PASS logout=PASS health=PASS pet=PASS shop=PASS feed=PASS migration=PASS idempotency=PASS');
   } finally {
     await stopServer(child);
     fs.rmSync(tempDir, { recursive: true, force: true });

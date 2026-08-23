@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { SessionStore, isLoopbackAddress } = require('./session-store');
+const PetSystem = require('./pet-system');
 
 const APP_ID = 'word-spirit-planet';
 const APP_VERSION = '0.3.0';
@@ -33,20 +34,27 @@ function getBody(req) {
   });
 }
 function validPhone(phone) { return /^1\d{10}$/.test(String(phone)); }
+function clamp(value, min, max, fallback = min) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
+}
+function safeStringList(input, limit = 100, length = 100) {
+  return Array.isArray(input) ? input.slice(-limit).map(value => String(value).slice(0, length)) : [];
+}
 function normalizeProgress(progress = {}) {
   const spirits = progress.spirits && typeof progress.spirits === 'object' && !Array.isArray(progress.spirits)
     ? progress.spirits : { lingling: 1 };
   spirits.lingling = Math.max(1, Number(spirits.lingling || 1));
   return {
-    stage: Math.max(1, Math.min(100, Number(progress.stage || 1))),
-    coins: Math.max(0, Math.min(999999, Number(progress.coins || 20))),
-    xp: Math.max(0, Math.min(9999999, Number(progress.xp || 0))),
-    tickets: Math.max(0, Math.min(9999, Number(progress.tickets || 0))),
-    dust: Math.max(0, Math.min(999999, Number(progress.dust || 0))),
-    streak: Math.max(0, Math.min(99999, Number(progress.streak || 0))),
-    bestCombo: Math.max(0, Math.min(9999, Number(progress.bestCombo || 0))),
-    draws: Math.max(0, Math.min(999999, Number(progress.draws || 0))),
-    pity: Math.max(0, Math.min(10, Number(progress.pity || 0))),
+    stage: clamp(progress.stage, 1, 100, 1),
+    coins: clamp(progress.coins, 0, 999999, 20),
+    xp: clamp(progress.xp, 0, 9999999, 0),
+    tickets: clamp(progress.tickets, 0, 9999, 0),
+    dust: clamp(progress.dust, 0, 999999, 0),
+    streak: clamp(progress.streak, 0, 99999, 0),
+    bestCombo: clamp(progress.bestCombo, 0, 9999, 0),
+    draws: clamp(progress.draws, 0, 999999, 0),
+    pity: clamp(progress.pity, 0, 10, 0),
     collected: Array.isArray(progress.collected) ? progress.collected.slice(0, 1000).map(value => String(value).slice(0, 50)) : [],
     mistakes: progress.mistakes && typeof progress.mistakes === 'object' && !Array.isArray(progress.mistakes) ? progress.mistakes : {},
     spirits: Object.fromEntries(Object.entries(spirits).slice(0, 100).map(([key, value]) => [String(key).slice(0, 40), Math.max(1, Math.min(99, Number(value || 1)))])),
@@ -59,12 +67,62 @@ function normalizeProgress(progress = {}) {
     tutorials: {
       match3: Boolean(progress.tutorials?.match3),
       pair: Boolean(progress.tutorials?.pair)
+    },
+    pet: PetSystem.normalizePetState(progress.pet),
+    migrationVersion: clamp(progress.migrationVersion, 0, 1, 0),
+    processedOperations: safeStringList(progress.processedOperations, 100, 100),
+    processedRewards: safeStringList(progress.processedRewards, 100, 100),
+    legacy: {
+      xp: clamp(progress.legacy?.xp ?? progress.xp, 0, 9999999, 0),
+      spirits: progress.legacy?.spirits && typeof progress.legacy.spirits === 'object'
+        ? progress.legacy.spirits : { ...spirits },
+      equipped: String(progress.legacy?.equipped || progress.equipped || 'lingling').slice(0, 40)
     }
   };
+}
+function migrateProgress(input = {}) {
+  const progress = normalizeProgress(input);
+  if (progress.migrationVersion >= 1) return progress;
+  progress.coins = clamp(progress.coins + progress.tickets * 80 + progress.dust * 5, 0, 999999, 0);
+  progress.tickets = 0;
+  progress.dust = 0;
+  progress.draws = 0;
+  progress.pity = 0;
+  progress.migrationVersion = 1;
+  return progress;
+}
+function migrateAllUsers() {
+  const db = readDb();
+  let changed = false;
+  db.users.forEach(user => {
+    const next = migrateProgress(user.progress);
+    if (JSON.stringify(next) !== JSON.stringify(user.progress)) changed = true;
+    user.progress = next;
+  });
+  if (changed) saveDb(db);
 }
 function publicUser(user) {
   const { phone, passwordHash, salt, ...safe } = user;
   return { ...safe, progress: normalizeProgress(safe.progress), phoneTail: phone.slice(-4) };
+}
+function targetContext(req) {
+  const user = requireUser(req);
+  if (!user) return null;
+  const db = readDb();
+  const target = db.users.find(item => item.id === user.id);
+  target.progress = migrateProgress(target.progress);
+  return { db, target, progress: target.progress };
+}
+function operationKey(kind, rawId) {
+  const id = String(rawId || '').trim().slice(0, 80);
+  if (!id) throw new Error('操作编号无效');
+  return `${kind}:${id}`;
+}
+function rememberOperation(progress, key) {
+  progress.processedOperations = [...progress.processedOperations.filter(item => item !== key), key].slice(-100);
+}
+function rememberReward(progress, runId) {
+  progress.processedRewards = [...progress.processedRewards.filter(item => item !== runId), runId].slice(-100);
 }
 function requireUser(req) {
   const rawToken = (req.headers.authorization || '').replace('Bearer ', '');
@@ -94,6 +152,7 @@ function sanitizeMistakes(input, current = {}) {
     ])
   );
 }
+migrateAllUsers();
 function serveFile(res, file) {
   const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.mp3': 'audio/mpeg' };
   fs.readFile(file, (error, data) => {
@@ -121,7 +180,7 @@ const server = http.createServer(async (req, res) => {
       const profile = profileFrom(body);
       const user = {
         id: crypto.randomUUID(), phone, salt, passwordHash: hash(password, salt), profile,
-        progress: normalizeProgress({ stage: 1, coins: 30, tickets: 1 }), createdAt: new Date().toISOString()
+        progress: normalizeProgress({ stage: 1, coins: 30, tickets: 0, dust: 0, migrationVersion: 1 }), createdAt: new Date().toISOString()
       };
       db.users.push(user); saveDb(db);
       return send(res, 201, {
@@ -170,8 +229,119 @@ const server = http.createServer(async (req, res) => {
       const body = await getBody(req); const db = readDb(); const target = db.users.find(item => item.id === user.id);
       const current = normalizeProgress(target.progress);
       const mistakes = sanitizeMistakes(body.mistakes, current.mistakes || {});
-      target.progress = normalizeProgress({ ...current, ...body, mistakes });
+      target.progress = normalizeProgress({
+        ...current,
+        stage: body.stage ?? current.stage,
+        xp: body.xp ?? current.xp,
+        streak: body.streak ?? current.streak,
+        bestCombo: body.bestCombo ?? current.bestCombo,
+        collected: body.collected ?? current.collected,
+        inventory: body.inventory ?? current.inventory,
+        tutorials: body.tutorials ?? current.tutorials,
+        mistakes
+      });
       saveDb(db); return send(res, 200, { user: publicUser(target) });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/pet/adopt') {
+      const context = targetContext(req); if (!context) return send(res, 401, { error: '请先登录' });
+      const body = await getBody(req);
+      if (context.progress.pet.speciesId) return send(res, 409, { error: '每个账号只能领取一只宠物' });
+      const pet = PetSystem.petById(body.speciesId);
+      const name = String(body.name || '').trim();
+      if (!pet) return send(res, 400, { error: '宠物品类无效' });
+      if (!PetSystem.validPetName(name)) return send(res, 400, { error: '宠物名字需为1至8个中文、英文或数字' });
+      context.progress.pet = PetSystem.normalizePetState({
+        speciesId: pet.id,
+        name,
+        adoptedAt: new Date().toISOString(),
+        growth: 0,
+        foodInventory: {}
+      });
+      context.target.progress = context.progress;
+      saveDb(context.db);
+      return send(res, 200, { user: publicUser(context.target) });
+    }
+    if (req.method === 'PATCH' && url.pathname === '/api/pet/name') {
+      const context = targetContext(req); if (!context) return send(res, 401, { error: '请先登录' });
+      const body = await getBody(req); const name = String(body.name || '').trim();
+      if (!context.progress.pet.speciesId) return send(res, 409, { error: '请先领取宠物' });
+      if (!PetSystem.validPetName(name)) return send(res, 400, { error: '宠物名字需为1至8个中文、英文或数字' });
+      context.progress.pet.name = name;
+      context.target.progress = context.progress;
+      saveDb(context.db);
+      return send(res, 200, { user: publicUser(context.target) });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/shop/purchase') {
+      const context = targetContext(req); if (!context) return send(res, 401, { error: '请先登录' });
+      const body = await getBody(req); const key = operationKey('buy', body.operationId);
+      if (context.progress.processedOperations.includes(key)) return send(res, 200, { user: publicUser(context.target), duplicate: true });
+      const food = PetSystem.foodById(body.itemId);
+      const tools = {
+        hint: { price: 60 },
+        shuffle: { price: 90 },
+        addMoves: { price: 120 }
+      };
+      const tool = tools[String(body.itemId || '')];
+      if (!food && !tool) return send(res, 400, { error: '商品不存在' });
+      if (food && !context.progress.pet.speciesId) return send(res, 409, { error: '请先领取宠物' });
+      if (food && context.progress.pet.level >= 10) return send(res, 409, { error: '宠物已经满级' });
+      const price = food?.price || tool.price;
+      if (context.progress.coins < price) return send(res, 409, { error: `金币不足，还差 ${price - context.progress.coins} 金币` });
+      context.progress.coins -= price;
+      if (food) context.progress.pet.foodInventory[food.id] += 1;
+      else context.progress.inventory[body.itemId] += 1;
+      rememberOperation(context.progress, key);
+      context.target.progress = context.progress;
+      saveDb(context.db);
+      return send(res, 200, { user: publicUser(context.target), purchased: food || { id: body.itemId, ...tool } });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/pet/feed') {
+      const context = targetContext(req); if (!context) return send(res, 401, { error: '请先登录' });
+      const body = await getBody(req); const key = operationKey('feed', body.operationId);
+      if (context.progress.processedOperations.includes(key)) return send(res, 200, { user: publicUser(context.target), duplicate: true });
+      const food = PetSystem.foodById(body.foodId);
+      if (!food) return send(res, 400, { error: '食物不存在' });
+      if (!context.progress.pet.speciesId) return send(res, 409, { error: '请先领取宠物' });
+      if (context.progress.pet.level >= 10) return send(res, 409, { error: '宠物已经满级' });
+      if (context.progress.pet.foodInventory[food.id] <= 0) return send(res, 409, { error: '背包里没有这种食物' });
+      const oldLevel = context.progress.pet.level;
+      context.progress.pet.foodInventory[food.id] -= 1;
+      context.progress.pet.growth = Math.min(2400, context.progress.pet.growth + food.growth);
+      context.progress.pet.level = PetSystem.petLevelForGrowth(context.progress.pet.growth);
+      rememberOperation(context.progress, key);
+      context.target.progress = context.progress;
+      saveDb(context.db);
+      return send(res, 200, {
+        user: publicUser(context.target),
+        feeding: { foodId: food.id, growth: food.growth, oldLevel, newLevel: context.progress.pet.level }
+      });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/game/complete') {
+      const context = targetContext(req); if (!context) return send(res, 401, { error: '请先登录' });
+      const body = await getBody(req); const runId = String(body.runId || '').trim().slice(0, 80);
+      if (!runId) return send(res, 400, { error: '关卡编号无效' });
+      if (context.progress.processedRewards.includes(runId)) {
+        return send(res, 200, { user: publicUser(context.target), reward: { duplicate: true, coins: 0, xp: 0 } });
+      }
+      const level = clamp(body.level, 1, 100, 1);
+      const stars = clamp(body.stars, 1, 3, 1);
+      const mode = ['match3', 'pair', 'spelling', 'falling'].includes(body.mode) ? body.mode : 'match3';
+      const missionType = ['normal', 'treasure', 'boss'].includes(body.missionType) ? body.missionType : 'normal';
+      const grade = Math.min(5, Math.ceil(level / 20));
+      const sessionCoins = clamp(body.sessionCoins, 0, 999, 0);
+      const missionCoins = missionType === 'treasure' ? 30 : missionType === 'boss' ? 20 : 0;
+      const specialCoins = mode === 'spelling' ? 20 : mode === 'falling' ? 30 : 0;
+      const coins = 12 + grade * 4 + stars * 4 + sessionCoins + missionCoins + specialCoins;
+      const xp = 30 + grade * 8 + stars * 5 + (missionType === 'boss' ? 20 : 0);
+      context.progress.stage = Math.max(context.progress.stage, Math.min(100, level + 1));
+      context.progress.coins = clamp(context.progress.coins + coins, 0, 999999, 0);
+      context.progress.xp = clamp(context.progress.xp + xp, 0, 9999999, 0);
+      context.progress.streak += 1;
+      context.progress.bestCombo = Math.max(context.progress.bestCombo, clamp(body.maxCombo, 0, 9999, 0));
+      rememberReward(context.progress, runId);
+      context.target.progress = context.progress;
+      saveDb(context.db);
+      return send(res, 200, { user: publicUser(context.target), reward: { duplicate: false, coins, xp } });
     }
     if (req.method === 'GET' && url.pathname === '/api/leaderboard') {
       const user = requireUser(req); if (!user) return send(res, 401, { error: '请先登录' });
