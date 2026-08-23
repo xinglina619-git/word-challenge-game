@@ -204,6 +204,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && ['/.js', '/app.js'].includes(url.pathname)) return serveFile(res, path.join(ROOT, 'app.js'));
     if (req.method === 'GET' && url.pathname === '/textbook-words.generated.js') return serveFile(res, path.join(ROOT, 'textbook-words.generated.js'));
     if (req.method === 'GET' && url.pathname === '/curriculum.js') return serveFile(res, path.join(ROOT, 'curriculum.js'));
+    if (req.method === 'GET' && url.pathname === '/pet-system.js') return serveFile(res, path.join(ROOT, 'pet-system.js'));
     if (req.method === 'GET' && url.pathname === '/styles.css') return serveFile(res, path.join(ROOT, 'styles.css'));
     if (req.method === 'GET' && url.pathname === '/assets/snake-countdown-bgm.mp3') return serveFile(res, path.join(ROOT, 'assets', 'snake-countdown-bgm.mp3'));
     if (req.method === 'GET' && url.pathname === '/assets/word-spirit.png') return serveFile(res, path.join(ROOT, 'assets', 'word-spirit.png'));

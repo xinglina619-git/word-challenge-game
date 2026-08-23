@@ -56,6 +56,33 @@ context.globalThis = context;
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(root, 'textbook-words.generated.js'), 'utf8'), context, { filename: 'textbook-words.generated.js' });
 vm.runInContext(fs.readFileSync(path.join(root, 'curriculum.js'), 'utf8'), context, { filename: 'curriculum.js' });
+vm.runInContext(fs.readFileSync(path.join(root, 'pet-system.js'), 'utf8'), context, { filename: 'pet-system.js' });
+const petSystem = context.PetSystem;
+if (Array.from(petSystem.PET_IDS).join(',') !== 'lingling,sprout,bubble,candy,spark,cloud,moon,rainbow') {
+  throw new Error('宠物品类目录不完整');
+}
+for (const id of petSystem.PET_IDS) {
+  const pet = petSystem.petById(id);
+  if (!pet?.species || !pet?.personality || !pet?.asset || !pet?.slogan) throw new Error(`${id} 宠物资料不完整`);
+  for (const scene of petSystem.QUOTE_SCENES) {
+    if (!Array.isArray(pet.quotes?.[scene]) || pet.quotes[scene].length < 4) throw new Error(`${id}/${scene} 专属语录不足`);
+  }
+}
+if (petSystem.petLevelForGrowth(0) !== 1 || petSystem.petLevelForGrowth(60) !== 2 || petSystem.petLevelForGrowth(2399) !== 9 || petSystem.petLevelForGrowth(2400) !== 10) {
+  throw new Error('宠物成长等级门槛不正确');
+}
+if (JSON.stringify(Array.from(petSystem.FOODS, item => [item.price, item.growth])) !== JSON.stringify([[20, 10], [50, 30], [100, 70], [180, 140]])) {
+  throw new Error('食物价格或成长值不正确');
+}
+const firstPetQuote = petSystem.quoteFor('cloud', 'retry', '', () => 0);
+const secondPetQuote = petSystem.quoteFor('cloud', 'retry', firstPetQuote, () => 0);
+if (!firstPetQuote || firstPetQuote === secondPetQuote) throw new Error('宠物语录没有避免连续重复');
+const indexSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+if (!indexSource.includes('/pet-system.js?v=1')) throw new Error('首页没有在 app.js 前加载宠物规则');
+const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+if (!serverSource.includes("url.pathname === '/pet-system.js'")) throw new Error('本地服务没有提供宠物规则脚本');
+const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+if (!packageJson.scripts.check.includes('node --check pet-system.js')) throw new Error('语法检查没有覆盖宠物规则脚本');
 const source = `${fs.readFileSync(path.join(root, 'app.js'), 'utf8')}
 globalThis.__gameTest = {
   newGame, starsForGame, findMatchLines, possibleMoves, expandedRemoval, gradeFor, wordsForLevel, adjacent, swap,
@@ -488,7 +515,7 @@ async function runAsyncRegressionTests() {
 }
 
 runAsyncRegressionTests().then(() => {
-  console.log('GAME_SMOKE=PASS levels=7 board=6x6 match3=PASS pair=PASS missions=PASS praise=PASS pictures=PASS rainbow=PASS audio=PASS tutorial=PASS coverage=PASS auth=PASS register-status=PASS');
+  console.log('GAME_SMOKE=PASS levels=7 board=6x6 match3=PASS pair=PASS missions=PASS praise=PASS pictures=PASS rainbow=PASS audio=PASS tutorial=PASS coverage=PASS pet=PASS auth=PASS register-status=PASS');
 }).catch(error => {
   console.error(error);
   process.exitCode = 1;
