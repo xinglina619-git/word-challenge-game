@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $launcher = (Get-ChildItem -LiteralPath $root -Filter '*.ps1' -File | Select-Object -First 1).FullName
 $fixture = Join-Path $root 'scripts\launcher_fixture_server.js'
+$processHelper = Join-Path $root 'scripts\launcher_process_helper.js'
 $testScript = $MyInvocation.MyCommand.Path
 $powershellExe = (Get-Command powershell.exe -ErrorAction Stop).Source
 $nodeExe = (Get-Command node.exe -ErrorAction Stop).Source
@@ -74,21 +75,14 @@ function Invoke-Launcher([hashtable]$Environment, [string]$Scenario) {
   $captureRoot = New-TestRoot
   $stdoutFile = Join-Path $captureRoot 'launcher.out.log'
   $stderrFile = Join-Path $captureRoot 'launcher.err.log'
-  $exitCodeFile = Join-Path $captureRoot 'launcher.exit.txt'
-  $commandFile = Join-Path $captureRoot 'invoke-launcher.cmd'
   try {
     foreach ($name in $Environment.Keys) {
       $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
       [Environment]::SetEnvironmentVariable($name, [string]$Environment[$name], 'Process')
     }
-    [IO.File]::WriteAllLines($commandFile, @(
-      '@echo off',
-      ('"{0}" -NoProfile -ExecutionPolicy Bypass -File "{1}" -InvokeOnly 1>"{2}" 2>"{3}"' -f $powershellExe, $testScript, $stdoutFile, $stderrFile),
-      ('>"{0}" echo %errorlevel%' -f $exitCodeFile)
-    ))
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = $env:ComSpec
-    $startInfo.Arguments = '/d /c "{0}"' -f $commandFile
+    $startInfo.FileName = $nodeExe
+    $startInfo.Arguments = '"{0}" "{1}" "{2}" "{3}"' -f $processHelper, $testScript, $stdoutFile, $stderrFile
     $startInfo.WorkingDirectory = $root
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
@@ -97,11 +91,12 @@ function Invoke-Launcher([hashtable]$Environment, [string]$Scenario) {
     $knownProcesses.Add($process)
     if (-not $process.WaitForExit(15000)) {
       Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+      $process.WaitForExit(3000) | Out-Null
       $output = (Get-Content -Raw -Encoding UTF8 $stdoutFile -ErrorAction SilentlyContinue) + (Get-Content -Raw -Encoding UTF8 $stderrFile -ErrorAction SilentlyContinue)
       throw "Launcher subprocess '$Scenario' did not exit within 15 seconds`nCaptured output: $output"
     }
     $process.WaitForExit()
-    $exitCode = [int](Get-Content -Raw -Encoding ASCII $exitCodeFile).Trim()
+    $exitCode = $process.ExitCode
     $output = (Get-Content -Raw -Encoding UTF8 $stdoutFile -ErrorAction SilentlyContinue) + (Get-Content -Raw -Encoding UTF8 $stderrFile -ErrorAction SilentlyContinue)
     return [pscustomobject]@{ ExitCode = $exitCode; Output = $output }
   } finally {
