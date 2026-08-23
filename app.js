@@ -3,16 +3,7 @@ const TITLES = [
   '语音魔法师', '句子炼金师', '词灵斗战神', '星河守护者', '词灵大师'
 ];
 
-const SPIRITS = [
-  { id: 'lingling', name: '灵灵', rarity: '初始', asset: '', skill: '提示目标词' },
-  { id: 'sprout', name: '星芽灵', rarity: '普通', asset: '/assets/spirit-sprout-v2.png', skill: '开局增加1步' },
-  { id: 'bubble', name: '泡泡灵', rarity: '普通', asset: '/assets/spirit-bubble-v1.png', skill: '连击金币+1' },
-  { id: 'candy', name: '糖果灵', rarity: '普通', asset: '/assets/spirit-candy-v1.png', skill: '消除得分+5%' },
-  { id: 'spark', name: '火花灵', rarity: '稀有', asset: '/assets/spirit-spark-v1.png', skill: '四连范围扩大' },
-  { id: 'cloud', name: '云朵灵', rarity: '稀有', asset: '/assets/spirit-cloud-v1.png', skill: '失败时保留1次连击' },
-  { id: 'moon', name: '月光灵', rarity: '稀有', asset: '/assets/spirit-moon-v1.png', skill: '每关免费提示1次' },
-  { id: 'rainbow', name: '彩虹灵', rarity: '传说', asset: '/assets/spirit-rainbow-v2.png', skill: '五连奖励翻倍' }
-];
+const SPIRITS = PetSystem.PETS;
 
 const BACKGROUND_MUSIC_SRC = '/assets/snake-countdown-bgm.mp3';
 const backgroundMusic = new Audio(BACKGROUND_MUSIC_SRC);
@@ -44,11 +35,11 @@ function selectVoiceForRole(voices = [], role = 'learning', excludedURI = '') {
   })[0] || null;
 }
 
-const DRAW_ITEMS = [
-  { id: 'hint', name: '智慧镜', icon: '🔮', amount: 2, rarity: '道具', description: '提示两次最佳移动' },
-  { id: 'shuffle', name: '旋风骰', icon: '🎲', amount: 2, rarity: '道具', description: '重新排列两次棋盘' },
-  { id: 'addMoves', name: '时光沙漏', icon: '⏳', amount: 1, rarity: '道具', description: '在关卡中增加5步' }
-];
+const SHOP_TOOLS = Object.freeze([
+  { id: 'hint', icon: '🔮', name: '智慧镜', description: '提示一次最佳移动', price: 60 },
+  { id: 'shuffle', icon: '🎲', name: '旋风骰', description: '重新排列一次棋盘', price: 90 },
+  { id: 'addMoves', icon: '⏳', name: '时光沙漏', description: '当前关卡增加5步', price: 120 }
+]);
 
 const VISUAL_WORDS = Object.fromEntries(`
 apple|🍎;banana|🍌;orange|🍊;pear|🍐;grape|🍇;watermelon|🍉;strawberry|🍓;lemon|🍋;peach|🍑;fruit|🍎;bread|🍞;rice|🍚;noodles|🍜;noodle|🍜;egg|🥚;milk|🥛;water|💧;juice|🧃;tea|🍵;coffee|☕;cake|🍰;cookie|🍪;candy|🍬;chocolate|🍫;hamburger|🍔;sandwich|🥪;ice cream|🍦;ice-cream|🍦;meat|🥩;chicken|🍗;fish|🐟;vegetable|🥬;carrot|🥕;salad|🥗;honey|🍯;salt|🧂;
@@ -97,8 +88,8 @@ const TIPS = [
   '四个相同词块会产生更强的范围消除。',
   '听发音时，注意单词开头和结尾的声音。',
   '错词会进入错词本，连续答对两次即可掌握。',
-  '每完成五关可以获得一张免费抽卡券。',
-  '抽到重复词灵会自动变成进化星尘。',
+  '完成学习可以赚金币，为宠物购买食物。',
+  '高级食物会带来更多成长值和更特别的互动。',
   '没有可消除组合时，棋盘会自动重新排列。'
 ];
 
@@ -122,8 +113,6 @@ const state = {
   view: 'loading',
   game: null,
   result: null,
-  drawResult: null,
-  drawing: false,
   leaderboard: [],
   currentRank: null,
   notice: '',
@@ -131,7 +120,10 @@ const state = {
   tip: Math.floor(Math.random() * TIPS.length),
   tipTimer: null,
   audio: readAudioSettings(),
-  audioPanel: false
+  audioPanel: false,
+  petBusy: false,
+  selectedPetId: '',
+  lastPetQuote: ''
 };
 
 const app = document.querySelector('#app');
@@ -180,6 +172,8 @@ function normalizedProgress() {
   p.draws = Math.max(0, Number(p.draws || 0));
   p.pity = Math.max(0, Number(p.pity || 0));
   p.bestCombo = Math.max(0, Number(p.bestCombo || 0));
+  p.pet = PetSystem.normalizePetState(p.pet);
+  p.migrationVersion = Math.max(0, Number(p.migrationVersion || 0));
   return p;
 }
 function titleFor(stage) { return TITLES[Math.min(9, Math.floor((Math.max(1, stage) - 1) / 10))]; }
@@ -398,19 +392,44 @@ async function speakWord(word) {
   window.speechSynthesis.speak(line);
 }
 
-function growthStage(count = 1) { return count >= 4 ? 3 : count >= 2 ? 2 : 1; }
-function growthName(count = 1) { return ['幼年', '成长', '闪耀'][growthStage(count) - 1]; }
+function growthStage(level = 1) {
+  const stage = PetSystem.petStageForLevel(level);
+  return stage === 'best' ? 4 : stage === 'shining' ? 3 : stage === 'growing' ? 2 : 1;
+}
+function growthName(level = 1) { return ['幼年期', '成长期', '闪耀期', '最佳伙伴'][growthStage(level) - 1]; }
 function activeSpirit() {
   if (!state.user) return SPIRITS[0];
-  return spiritById(normalizedProgress().equipped);
+  return spiritById(normalizedProgress().pet.speciesId);
 }
-function spiritFigure(className = '', spirit = activeSpirit(), count) {
-  const owned = count ?? (state.user?.progress?.spirits?.[spirit.id] || 1);
+function spiritFigure(className = '', spirit = activeSpirit(), level) {
+  const owned = level ?? (state.user?.progress?.pet?.level || 1);
   const unique = spirit.asset ? 'unique-spirit' : '';
   const style = spirit.asset ? `--spirit-image:url('${spirit.asset}')` : '';
   return `<span class="spirit-figure ${unique} growth-stage-${growthStage(owned)} ${className}" style="${style}" role="img" aria-label="${spirit.name}"></span>`;
 }
 function spiritById(id) { return SPIRITS.find(item => item.id === id) || SPIRITS[0]; }
+function petSpeech(scene) {
+  if (!state.user) return '';
+  const pet = normalizedProgress().pet;
+  if (!pet.speciesId) return '';
+  const quote = PetSystem.quoteFor(pet.speciesId, scene, state.lastPetQuote);
+  state.lastPetQuote = quote;
+  return quote;
+}
+function petGrowthPercent(pet) {
+  if (pet.level >= 10) return 100;
+  const previous = PetSystem.LEVEL_THRESHOLDS[pet.level - 1];
+  const next = PetSystem.nextGrowthTarget(pet.level);
+  return Math.max(0, Math.min(100, (pet.growth - previous) / (next - previous) * 100));
+}
+function petTargetMessage(progress) {
+  const pet = progress.pet;
+  if (!pet.speciesId) return '先领取一只属于你的学习伙伴吧！';
+  if (pet.level >= 10) return `${pet.name}已经成为最佳学习伙伴，继续一起认识新单词吧！`;
+  const nextFood = PetSystem.FOODS.find(food => progress.coins < food.price) || PetSystem.FOODS.at(-1);
+  if (progress.coins < nextFood.price) return `再赚 ${nextFood.price - progress.coins} 金币，就可以买${nextFood.name}啦！`;
+  return `还差 ${PetSystem.nextGrowthTarget(pet.level) - pet.growth} 点成长值，${pet.name}就能升级了！`;
+}
 
 function gradeBank(grade) {
   if (grade === 4) {
@@ -575,6 +594,7 @@ function newGame(level) {
   const mode = modeForLevel(level);
   const mission = missionForLevel(level);
   const game = {
+    runId: `${Date.now()}-${level}-${Math.random().toString(36).slice(2, 10)}`,
     level,
     grade: gradeFor(level),
     mode,
@@ -905,26 +925,53 @@ async function selectPair(index) {
 async function finishLevel(win) {
   const game = state.game;
   if (!game) return;
-  const p = normalizedProgress();
   if (!win) {
-    state.result = { win: false, level: game.level, score: game.score, combo: game.maxCombo, learned: game.learnedTypes.length };
+    state.result = { win: false, level: game.level, score: game.score, combo: game.maxCombo, learned: game.learnedTypes.length, petQuote: petSpeech('retry') };
     state.view = 'result';
     render();
     return;
   }
   const stars = starsForGame(game);
-  const xp = 30 + game.grade * 8 + stars * 5 + (game.mission.type === 'boss' ? 20 : 0);
   const missionCoins = game.mission.type === 'treasure' ? 30 : game.mission.type === 'boss' ? 20 : 0;
-  const coins = 12 + game.grade * 4 + stars * 4 + game.sessionCoins + missionCoins;
-  const ticket = game.level % 20 === 0 ? 2 : game.level % 5 === 0 ? 1 : 0;
-  p.stage = Math.max(p.stage, Math.min(100, game.level + 1));
-  p.xp += xp;
-  p.coins += coins;
-  p.tickets += ticket;
-  p.streak += 1;
-  p.bestCombo = Math.max(p.bestCombo, game.maxCombo);
-  try { await persistProgress(); } catch {}
-  state.result = { win: true, level: game.level, score: game.score, combo: game.maxCombo, learned: game.learnedTypes.length, stars, xp, coins, ticket, mission: game.mission, missionCoins };
+  const fallbackReward = {
+    coins: 12 + game.grade * 4 + stars * 4 + game.sessionCoins + missionCoins,
+    xp: 30 + game.grade * 8 + stars * 5 + (game.mission.type === 'boss' ? 20 : 0)
+  };
+  let reward = fallbackReward;
+  let saved = false;
+  try {
+    const data = await api('/api/game/complete', {
+      method: 'POST',
+      body: JSON.stringify({
+        runId: game.runId,
+        level: game.level,
+        mode: game.mode,
+        stars,
+        missionType: game.mission.type,
+        sessionCoins: game.sessionCoins,
+        maxCombo: game.maxCombo
+      })
+    });
+    state.user = data.user;
+    reward = data.reward;
+    saved = true;
+  } catch (error) {
+    state.notice = `成绩暂时没有保存成功：${error.message}`;
+  }
+  state.result = {
+    win: true,
+    level: game.level,
+    score: game.score,
+    combo: game.maxCombo,
+    learned: game.learnedTypes.length,
+    stars,
+    xp: reward.xp,
+    coins: reward.coins,
+    mission: game.mission,
+    missionCoins,
+    saved,
+    petQuote: petSpeech(stars === 3 ? 'star3' : stars === 2 ? 'star2' : 'star1')
+  };
   state.view = 'result';
   soundCoinBurst();
   render();
@@ -979,14 +1026,14 @@ function shell(content, active = 'home') {
   return `<div class="app-shell">
     <header class="topbar">
       <button class="brand" data-action="home">${spiritFigure('brand-spirit')}<span><b>词灵星球</b><small>英语单词消消乐</small></span></button>
-      <div class="top-actions"><button class="audio-settings-button" data-action="audio-settings" aria-label="声音设置">🔊<span>${audioIcon(state.audio)}</span></button><span>🎟 ${p.tickets}</span><span>🪙 ${p.coins}</span><button class="profile" data-action="profile">${esc(state.user.profile.nickname)}</button></div>
+      <div class="top-actions"><button class="audio-settings-button" data-action="audio-settings" aria-label="声音设置">🔊<span>${audioIcon(state.audio)}</span></button>${p.pet.speciesId ? `<span>🐾 Lv.${p.pet.level}</span>` : ''}<span>🪙 ${p.coins}</span><button class="profile" data-action="profile">${esc(state.user.profile.nickname)}</button></div>
     </header>
     ${content}
     <nav class="bottom-nav">
       <button class="${active === 'home' ? 'active' : ''}" data-action="home">🪐<span>星球</span></button>
       <button class="${active === 'game' ? 'active' : ''}" data-action="play">◆<span>消消乐</span></button>
-      <button class="${active === 'draw' ? 'active' : ''}" data-action="draw">✦<span>抽卡</span></button>
-      <button class="${active === 'collection' ? 'active' : ''}" data-action="collection">▦<span>词灵</span></button>
+      <button class="${active === 'pet' ? 'active' : ''}" data-action="pet-home">🐾<span>宠物</span></button>
+      <button class="${active === 'shop' ? 'active' : ''}" data-action="shop">🛍️<span>商店</span></button>
       <button class="${active === 'rank' ? 'active' : ''}" data-action="leaderboard">♛<span>排行</span></button>
     </nav>${state.audioPanel ? audioSettingsPanel() : ''}
   </div>${state.notice ? `<div class="toast">${esc(state.notice)}</div>` : ''}`;
@@ -996,7 +1043,7 @@ function authView() {
   const mode = login ? 'login' : 'register';
   return `<main class="auth-page"><section class="auth-card">
     ${spiritFigure('auth-spirit')}
-    <p>英语单词消消乐</p><h1>词灵星球</h1><small>消除单词，收集词灵，让每次升级都有新发现。</small>
+    <p>英语单词消消乐</p><h1>词灵星球</h1><small>学习赚金币，陪伴属于你的宠物一起成长。</small>
     <div class="auth-tabs" role="tablist"><button class="${login ? 'active' : ''}" data-action="switch-login" type="button" role="tab" aria-selected="${login}" ${state.auth.busy ? 'disabled' : ''}>登录</button><button class="${!login ? 'active' : ''}" data-action="switch-register" type="button" role="tab" aria-selected="${!login}" ${state.auth.busy ? 'disabled' : ''}>注册</button></div>
     <form id="auth-form" aria-busy="${state.auth.busy}">
       <label>家长手机号<input required name="phone" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="请输入11位手机号" value="${esc(state.auth.phone)}"></label>
@@ -1044,30 +1091,35 @@ function resetPasswordView() {
 function homeView() {
   const p = normalizedProgress();
   const level = Math.min(100, p.stage);
-  const nextTicket = 5 - ((level - 1) % 5);
-  const owned = Object.keys(p.spirits).length;
-  const power = 100 + Object.values(p.spirits).reduce((sum, count) => sum + growthStage(count) * 25, 0) + Object.values(p.inventory).reduce((sum, count) => sum + count * 3, 0);
-  const equipped = spiritById(p.equipped);
   const tip = level === 1 && p.collected.length === 0
     ? '完成有效消除后会自动依次朗读英文和中文，词块随后直接消失。'
     : TIPS[state.tip];
+  if (!p.pet.speciesId) {
+    return shell(`<main class="home-page">
+      <section class="hero pet-welcome-hero"><div><p>免费的学习伙伴</p><h1>${esc(state.user.profile.nickname)}，先领取一只宠物吧！</h1><p>8种宠物都很可爱，每个账号只能选择一只，领取后品类不能更换。</p><button class="play-main" data-action="pet-store">领取我的学习伙伴</button></div>${spiritFigure('hero-spirit', SPIRITS[0], 1)}</section>
+      <section class="home-section learning"><h2>也可以先看看学习内容</h2><div class="learning-grid"><button data-action="play"><span>▶️</span><b>开始第 ${level} 关</b><small>${gradeFor(level)}年级</small></button><button data-action="levels"><span>🗺️</span><b>选择关卡</b><small>1～${level} 关可玩</small></button><button data-action="mistakes"><span>📝</span><b>错词本</b><small>${Object.keys(p.mistakes).length} 个待复习</small></button></div></section>
+    </main>`);
+  }
+  const pet = PetSystem.petById(p.pet.speciesId);
+  const nextTarget = PetSystem.nextGrowthTarget(p.pet.level);
   return shell(`<main class="home-page">
     <section class="hero">
-      <div><p>当前称号 · ${titleFor(level)}</p><h1>${esc(state.user.profile.nickname)}，今天消几个词？</h1><div class="hero-stats"><span>第 ${level} 关</span><span>${gradeFor(level)}年级</span><span>词灵 ${owned}/${SPIRITS.length}</span></div><button class="play-main" data-action="play">开始消除 ▶</button></div>
-      <div class="hero-spirit-wrap">${spiritFigure('hero-spirit', equipped, p.spirits[equipped.id])}<small>${equipped.name} · ${growthName(p.spirits[equipped.id])} · 战力 ${power}</small></div>
+      <div><p>当前称号 · ${titleFor(level)}</p><h1>${esc(state.user.profile.nickname)}，今天和${esc(p.pet.name)}学几个词？</h1><div class="hero-stats"><span>第 ${level} 关</span><span>${gradeFor(level)}年级</span><span>${esc(pet.species)}</span></div><button class="play-main" data-action="play">开始学习 ▶</button></div>
+      <button class="hero-spirit-wrap pet-interact" data-action="pet-tap">${spiritFigure('hero-spirit', pet, p.pet.level)}<small>${esc(p.pet.name)} · ${growthName(p.pet.level)} · Lv.${p.pet.level}</small></button>
     </section>
-    <section class="level-progress"><div><b>成长等级 ${xpLevel(p.xp)}</b><span>${p.xp % 100}/100 XP</span></div><i><em style="width:${p.xp % 100}%"></em></i><small>再完成 ${nextTicket} 关获得免费抽卡券</small></section>
+    <section class="level-progress pet-growth-card"><div><b>${esc(p.pet.name)} · Lv.${p.pet.level}</b><span>${p.pet.level >= 10 ? '已经满级' : `${p.pet.growth}/${nextTarget} 成长值`}</span></div><i class="pet-growth-bar"><em style="width:${petGrowthPercent(p.pet)}%"></em></i><small>${esc(petTargetMessage(p))}</small></section>
     <section class="home-section learning"><h2>继续学习</h2><div class="learning-grid">
       <button data-action="play"><span>▶️</span><b>继续第 ${level} 关</b><small>${gradeFor(level)}年级</small></button>
       <button data-action="levels"><span>🗺️</span><b>选择关卡</b><small>1～${level} 关可玩</small></button>
       <button data-action="mistakes"><span>📝</span><b>错词本</b><small>${Object.keys(p.mistakes).length} 个待复习</small></button>
     </div></section>
     <section class="home-section rewards"><h2>成长奖励</h2><div class="reward-grid">
-      <button data-action="draw"><span>🎟</span><b>免费抽卡</b><small>${p.tickets} 张抽卡券</small></button>
-      <button data-action="collection"><span>✨</span><b>词灵图鉴</b><small>已收集 ${owned} 只</small></button>
-      <button data-action="shop"><span>🛍️</span><b>金币道具屋</b><small>只使用游戏金币</small></button>
+      <button data-action="pet-home"><span>🐾</span><b>宠物之家</b><small>喂养、互动和改名</small></button>
+      <button data-action="shop"><span>🍓</span><b>食物与道具</b><small>拥有 ${p.coins} 金币</small></button>
+      <button data-action="levels"><span>⭐</span><b>挑战更多关卡</b><small>学习就能赚金币</small></button>
     </div></section>
-    <section class="tip-card"><span>💡</span><div><b>词灵小提示</b><p>${esc(tip)}</p></div></section>
+    ${state.lastPetQuote ? `<section class="pet-speech-bubble"><b>${esc(p.pet.name)}说</b><p>${esc(state.lastPetQuote)}</p></section>` : ''}
+    <section class="tip-card"><span>💡</span><div><b>学习小提示</b><p>${esc(tip)}</p></div></section>
   </main>`);
 }
 function levelIntroView() {
@@ -1171,13 +1223,17 @@ function gameView() {
 }
 function resultView() {
   const r = state.result;
+  const p = normalizedProgress();
+  const pet = p.pet.speciesId ? PetSystem.petById(p.pet.speciesId) : SPIRITS[0];
   return shell(`<main class="result-page ${r.win ? 'win' : 'lose'}">
-    ${spiritFigure('result-spirit')}
+    ${spiritFigure('result-spirit', pet, p.pet.level)}
     <p>${r.win ? '关卡完成' : '步数用完啦'}</p>
-    <h1>${r.win ? ['漂亮！全部消掉啦！', '这关也被你拿下了！', '词灵都在为你鼓掌！'][r.level % 3] : '差一点就成功了'}</h1>
-    ${r.win ? `<div class="stars">${'★'.repeat(r.stars)}${'☆'.repeat(3 - r.stars)}</div>${r.mission?.type !== 'normal' ? `<div class="mission-reward">${r.mission.icon} ${r.mission.name}奖励已开启</div>` : ''}<div class="reward-row"><span>经验 +${r.xp}</span><span>金币 +${r.coins}</span>${r.ticket ? `<span>抽卡券 +${r.ticket}</span>` : ''}</div>` : ''}
+    <h1>${r.win ? ['漂亮！全部消掉啦！', '这关也被你拿下了！', `${esc(p.pet.name || pet.name)}正在为你鼓掌！`][r.level % 3] : '差一点就成功了'}</h1>
+    ${r.petQuote ? `<div class="pet-speech-bubble result-pet-speech"><b>${esc(p.pet.name || pet.name)}说</b><p>${esc(r.petQuote)}</p></div>` : ''}
+    ${r.win ? `<div class="stars">${'★'.repeat(r.stars)}${'☆'.repeat(3 - r.stars)}</div>${r.mission?.type !== 'normal' ? `<div class="mission-reward">${r.mission.icon} ${r.mission.name}奖励已开启</div>` : ''}<div class="reward-row"><span>经验 +${r.xp}</span><span>金币 +${r.coins}</span></div>${r.saved === false ? '<small class="save-warning">网络恢复后请重新完成本关，奖励才会存入账号。</small>' : ''}` : ''}
     <div class="result-stats"><span>得分 <b>${r.score}</b></span><span>本关认识 <b>${r.learned || 0} 个词</b></span><span>最高连击 <b>${r.combo}</b></span></div>
     <button class="primary" data-action="${r.win ? 'next-level' : 'retry'}">${r.win ? (r.level >= 100 ? '返回星球' : '下一关') : '重新挑战'}</button>
+    ${p.pet.speciesId ? '<button class="ghost" data-action="pet-home">去看看宠物</button>' : ''}
     <button class="ghost" data-action="home">返回主页</button>
   </main>`, 'game');
 }
@@ -1187,44 +1243,48 @@ function levelsView() {
     <div class="level-grid">${Array.from({ length: 100 }, (_, i) => i + 1).map(level => `<button data-level="${level}" class="${level <= p.stage ? 'open' : 'locked'}" ${level > p.stage ? 'disabled' : ''}><b>${level}</b><small>${gradeFor(level)}年级</small></button>`).join('')}</div>
   </main>`);
 }
-function drawView() {
+function petStoreView() {
   const p = normalizedProgress();
-  const result = state.drawResult;
-  const isItem = result?.type === 'item';
-  const revealRarity = result?.rarity || '';
-  return shell(`<main class="draw-page">
-    <div class="draw-sky ${state.drawing ? 'drawing' : ''} ${result ? `reveal-${revealRarity}` : ''}">
-      ${state.drawing
-        ? '<div class="summon-capsule"><i></i><b>星愿正在回应……</b></div>'
-        : isItem
-          ? `<div class="item-reveal-icon">${result.icon}</div>`
-          : spiritFigure('draw-spirit', result ? spiritById(result.id) : activeSpirit(), result?.count)}
-      ${result && !state.drawing ? `<div class="draw-reveal"><small>${result.rarity}</small><h1>${result.name}</h1><p>${isItem ? `${result.description} · 数量 +${result.amount}` : result.duplicate ? `重复词灵转化为 ${result.dust} 星尘，并积累成长能量` : result.skill}</p>${!isItem ? `<b>${growthName(result.count)}形态</b>` : ''}</div>` : state.drawing ? '' : '<div><p>免费成长抽卡</p><h1>召唤词灵与增强道具</h1><small>每10抽稀有保底 · 每30抽传说保底</small></div>'}
-    </div>
-    <div class="draw-info"><span>🎟 抽卡券 <b>${p.tickets}</b></span><span>✨ 星尘 <b>${p.dust}</b></span><span>稀有保底 <b>${p.pity}/10</b></span><span>传说保底 <b>${p.draws % 30}/30</b></span></div>
-    <button class="draw-button" data-action="draw-card" ${p.tickets <= 0 || state.drawing ? 'disabled' : ''}>${state.drawing ? '星光汇聚中…' : '消耗1张抽卡券'}</button>
-    <p class="fair-note">公开概率：普通词灵50% · 增强道具20% · 稀有词灵25% · 传说词灵5%。抽卡券只通过学习获得，不出售。</p>
-  </main>`, 'draw');
+  if (p.pet.speciesId) return petHomeView();
+  const selectedId = PetSystem.petById(state.selectedPetId)?.id || SPIRITS[0].id;
+  const selected = PetSystem.petById(selectedId);
+  state.selectedPetId = selectedId;
+  return shell(`<main class="list-page pet-store-page">
+    <div class="page-title"><span>🐾</span><div><p>选择学习伙伴</p><h1>8种宠物，只领取其中一只</h1></div></div>
+    <div class="permanent-choice-note"><b>领取免费，但选择是永久的</b><span>领取后可以随时免费改名，宠物品类不能更换。请先预览，再确认领取。</span></div>
+    <div class="pet-catalog-grid">${SPIRITS.map(spirit => `<button type="button" class="pet-catalog-card ${spirit.id === selectedId ? 'selected' : ''}" data-action="select-pet" data-pet-id="${spirit.id}" aria-pressed="${spirit.id === selectedId}">
+      ${spiritFigure('catalog-spirit', spirit, 1)}<small>${esc(spirit.species)} · ${esc(spirit.personality)}</small><h2>${esc(spirit.name)}</h2><p>“${esc(spirit.slogan)}”</p><b>${spirit.id === selectedId ? '已选中，查看预览' : '选择预览'}</b>
+    </button>`).join('')}</div>
+    <section class="pet-adopt-preview">${spiritFigure('adopt-preview-spirit', selected, 1)}<div><small>${esc(selected.species)} · ${esc(selected.personality)}</small><h2>领取${esc(selected.name)}</h2><p>${esc(selected.slogan)}</p>
+      <form id="pet-adopt-form"><input type="hidden" name="speciesId" value="${selected.id}"><label>给它取名字<input required maxlength="8" name="name" value="${esc(selected.name)}" pattern="[A-Za-z0-9一-龥]{1,8}" title="1至8个中文、英文或数字"></label><button class="primary" ${state.petBusy ? 'disabled' : ''}>${state.petBusy ? '正在领取…' : '确认领取这只宠物'}</button></form>
+    </div></section>
+  </main>`, 'pet');
 }
-function collectionView() {
+function petHomeView() {
   const p = normalizedProgress();
-  return shell(`<main class="list-page"><div class="page-title"><span>✨</span><div><p>词灵图鉴</p><h1>${Object.keys(p.spirits).length}/${SPIRITS.length} 已收集</h1></div></div>
-    <div class="spirit-grid">${SPIRITS.map(spirit => {
-      const count = p.spirits[spirit.id] || 0;
-      return `<article class="${count ? 'owned' : 'unknown'} ${p.equipped === spirit.id ? 'equipped' : ''}">${spiritFigure('card-spirit', spirit, count || 1)}<small>${count ? `${spirit.rarity} · ${growthName(count)}` : '尚未发现'}</small><h2>${count ? spirit.name : '？？？'}</h2><p>${count ? spirit.skill : '通过免费抽卡获得'}</p>${count ? `<div class="growth-dots"><i></i><i class="${count >= 2 ? 'on' : ''}"></i><i class="${count >= 4 ? 'on' : ''}"></i></div><button data-action="equip-spirit" data-spirit="${spirit.id}" ${p.equipped === spirit.id ? 'disabled' : ''}>${p.equipped === spirit.id ? '正在陪伴' : '设为伙伴'}</button>` : ''}</article>`;
-    }).join('')}</div>
-  </main>`, 'collection');
+  if (!p.pet.speciesId) return petStoreView();
+  const pet = PetSystem.petById(p.pet.speciesId);
+  const nextTarget = PetSystem.nextGrowthTarget(p.pet.level);
+  return shell(`<main class="list-page pet-home-page">
+    <div class="page-title"><span>🏡</span><div><p>宠物之家</p><h1>${esc(p.pet.name)}今天也在等你</h1></div></div>
+    <section class="pet-room-card">
+      <button class="pet-room-figure pet-interact" data-action="pet-tap">${spiritFigure('home-pet-spirit', pet, p.pet.level)}<span>轻轻点我互动</span></button>
+      <div class="pet-room-info"><small>${esc(pet.species)} · ${esc(pet.personality)} · ${growthName(p.pet.level)}</small><h2>${esc(p.pet.name)} · Lv.${p.pet.level}</h2><p>“${esc(pet.slogan)}”</p>
+        <i class="pet-growth-bar"><em style="width:${petGrowthPercent(p.pet)}%"></em></i><b>${p.pet.level >= 10 ? '已达到最高等级' : `${p.pet.growth}/${nextTarget} 成长值`}</b><span>${esc(petTargetMessage(p))}</span>
+      </div>
+    </section>
+    ${state.lastPetQuote ? `<section class="pet-speech-bubble"><b>${esc(p.pet.name)}说</b><p>${esc(state.lastPetQuote)}</p></section>` : ''}
+    <section class="pet-home-section"><h2>喂养背包</h2><p>食物由学习获得的金币兑换。宠物不会饥饿、生病或退级。</p><div class="food-shop-grid">${PetSystem.FOODS.map(food => `<article class="food-card ${food.price >= 100 ? 'premium' : ''}"><div>${food.icon}</div><h3>${food.name}</h3><p>成长值 +${food.growth}</p><small>库存 ${p.pet.foodInventory[food.id]}</small><button data-action="feed-pet" data-food-id="${food.id}" ${state.petBusy || p.pet.level >= 10 || p.pet.foodInventory[food.id] <= 0 ? 'disabled' : ''}>${p.pet.level >= 10 ? '已经满级' : '喂给宠物'}</button></article>`).join('')}</div></section>
+    <section class="pet-home-section pet-rename-card"><h2>免费改名</h2><form id="pet-rename-form"><input required maxlength="8" name="name" value="${esc(p.pet.name)}" pattern="[A-Za-z0-9一-龥]{1,8}" title="1至8个中文、英文或数字"><button ${state.petBusy ? 'disabled' : ''}>保存名字</button></form><small>名字可以随时修改；已经领取的${esc(pet.species)}不会改变。</small></section>
+    <button class="primary" data-action="shop">去商店兑换食物</button>
+  </main>`, 'pet');
 }
 function shopView() {
   const p = normalizedProgress();
-  const offers = [
-    { id: 'hint', icon: '🔮', name: '智慧镜', description: '提示一次最佳移动', price: 60 },
-    { id: 'shuffle', icon: '🎲', name: '旋风骰', description: '重新排列棋盘', price: 90 },
-    { id: 'addMoves', icon: '⏳', name: '时光沙漏', description: '当前关卡增加5步', price: 120 }
-  ];
-  return shell(`<main class="list-page"><div class="page-title"><span>🛍️</span><div><p>金币道具屋</p><h1>拥有 🪙 ${p.coins}</h1></div></div>
-    <p class="shop-note">所有金币均由学习和闯关获得，道具不会收费出售。</p>
-    <div class="shop-grid">${offers.map(item => `<article><div>${item.icon}</div><h2>${item.name}</h2><p>${item.description}</p><small>库存 ${p.inventory[item.id] || 0}</small><button data-action="buy-item" data-item="${item.id}" data-price="${item.price}" ${p.coins < item.price ? 'disabled' : ''}>🪙 ${item.price} 兑换</button></article>`).join('')}</div>
+  return shell(`<main class="list-page"><div class="page-title"><span>🛍️</span><div><p>学习金币商店</p><h1>拥有 🪙 ${p.coins}</h1></div></div>
+    <p class="shop-note">这里只使用闯关赚到的金币，不含充值、付费或随机抽取。</p>
+    <section class="shop-section"><h2>宠物食物</h2>${p.pet.speciesId ? `<p>越优质的食物成长值越高，高级食物还会触发更丰富的庆祝动作。</p>` : '<p class="adopt-reminder">先领取一只宠物，才能为它兑换食物。</p>'}<div class="food-shop-grid">${PetSystem.FOODS.map(food => `<article class="food-card ${food.price >= 100 ? 'premium' : ''}"><div>${food.icon}</div><h3>${food.name}</h3><p>成长值 +${food.growth}</p><small>${p.pet.speciesId ? `库存 ${p.pet.foodInventory[food.id]}` : '等待领取宠物'}</small><button data-action="buy-shop-item" data-shop-item="${food.id}" ${state.petBusy || !p.pet.speciesId || p.pet.level >= 10 || p.coins < food.price ? 'disabled' : ''}>🪙 ${food.price} 兑换</button></article>`).join('')}</div></section>
+    <section class="shop-section"><h2>学习道具</h2><div class="shop-grid">${SHOP_TOOLS.map(item => `<article><div>${item.icon}</div><h2>${item.name}</h2><p>${item.description}</p><small>库存 ${p.inventory[item.id] || 0}</small><button data-action="buy-shop-item" data-shop-item="${item.id}" ${state.petBusy || p.coins < item.price ? 'disabled' : ''}>🪙 ${item.price} 兑换</button></article>`).join('')}</div></section>
   </main>`);
 }
 function mistakesView() {
@@ -1251,8 +1311,8 @@ function render() {
   else if (state.view === 'intro') app.innerHTML = levelIntroView();
   else if (state.view === 'result') app.innerHTML = resultView();
   else if (state.view === 'levels') app.innerHTML = levelsView();
-  else if (state.view === 'draw') app.innerHTML = drawView();
-  else if (state.view === 'collection') app.innerHTML = collectionView();
+  else if (state.view === 'pet-store') app.innerHTML = petStoreView();
+  else if (state.view === 'pet-home') app.innerHTML = petHomeView();
   else if (state.view === 'mistakes') app.innerHTML = mistakesView();
   else if (state.view === 'shop') app.innerHTML = shopView();
   else if (state.view === 'leaderboard') app.innerHTML = leaderboardView();
@@ -1271,48 +1331,6 @@ async function openLeaderboard() {
   } catch (error) { toast(error.message); }
   render();
 }
-async function drawCard() {
-  const p = normalizedProgress();
-  if (p.tickets <= 0) return toast('完成关卡即可获得免费抽卡券');
-  p.tickets -= 1;
-  p.draws += 1;
-  p.pity += 1;
-  state.drawResult = null;
-  state.drawing = true;
-  render();
-  [220, 260, 320, 420, 560].forEach((note, index) => tone(note, index * .2, .28, 'triangle', .04));
-  await sleep(1450);
-  const legendGuaranteed = p.draws % 30 === 0;
-  const rareGuaranteed = p.pity >= 10;
-  const roll = Math.random();
-  if (!legendGuaranteed && !rareGuaranteed && roll < .2) {
-    const item = DRAW_ITEMS[Math.floor(Math.random() * DRAW_ITEMS.length)];
-    p.inventory[item.id] = (p.inventory[item.id] || 0) + item.amount;
-    state.drawResult = { ...item, type: 'item' };
-    state.drawing = false;
-    soundDraw('道具');
-    try { await persistProgress(); } catch {}
-    render();
-    return;
-  }
-  let pool;
-  if (legendGuaranteed || (!rareGuaranteed && roll >= .95)) pool = SPIRITS.filter(item => item.rarity === '传说');
-  else if (rareGuaranteed || roll >= .7) pool = SPIRITS.filter(item => item.rarity === '稀有');
-  else pool = SPIRITS.filter(item => item.rarity === '普通');
-  const spirit = pool[Math.floor(Math.random() * pool.length)];
-  const duplicate = Boolean(p.spirits[spirit.id]);
-  const dust = spirit.rarity === '传说' ? 30 : spirit.rarity === '稀有' ? 15 : 6;
-  if (duplicate) {
-    p.spirits[spirit.id] += 1;
-    p.dust += dust;
-  } else p.spirits[spirit.id] = 1;
-  if (spirit.rarity === '稀有' || spirit.rarity === '传说') p.pity = 0;
-  state.drawResult = { ...spirit, duplicate, dust, count: p.spirits[spirit.id], type: 'spirit' };
-  state.drawing = false;
-  soundDraw(spirit.rarity);
-  try { await persistProgress(); } catch {}
-  render();
-}
 function startLevel(level) {
   cancelSpeech();
   state.game = newGame(Math.max(1, Math.min(100, level)));
@@ -1321,24 +1339,64 @@ function startLevel(level) {
   state.view = 'intro';
   render();
 }
-async function equipSpirit(id) {
-  const p = normalizedProgress();
-  if (!p.spirits[id]) return;
-  p.equipped = id;
-  startMusic();
-  soundCombo(growthStage(p.spirits[id]));
-  try { await persistProgress(); } catch {}
-  toast(`${spiritById(id).name}已加入，继续学习吧！`);
+function operationId(prefix) {
+  const random = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${random}`;
 }
-async function buyItem(id, price) {
-  const p = normalizedProgress();
-  if (!Object.hasOwn(p.inventory, id) || !Number.isFinite(price)) return;
-  if (p.coins < price) return toast('金币还不够，继续闯关就能获得');
-  p.coins -= price;
-  p.inventory[id] += 1;
-  try { await persistProgress(); } catch {}
-  soundCoinBurst();
-  toast('兑换成功，道具已经放进背包');
+async function adoptPet(speciesId, name) {
+  const pet = PetSystem.petById(speciesId);
+  if (!pet || !PetSystem.validPetName(name)) return toast('请选择宠物，并填写1至8个中文、英文或数字作为名字');
+  if (!globalThis.confirm(`确认领取“${pet.species}”并命名为“${name}”吗？领取后不能更换宠物品类。`)) return;
+  state.petBusy = true;
+  render();
+  try {
+    const data = await api('/api/pet/adopt', { method: 'POST', body: JSON.stringify({ speciesId, name }) });
+    state.user = data.user;
+    state.lastPetQuote = petSpeech('home');
+    state.view = 'pet-home';
+    soundSpecial('burst', 7);
+    toast(`${name}已经成为你的专属学习伙伴！`);
+  } catch (error) { toast(error.message); }
+  finally { state.petBusy = false; render(); }
+}
+async function renamePet(name) {
+  if (!PetSystem.validPetName(name)) return toast('宠物名字需为1至8个中文、英文或数字');
+  state.petBusy = true;
+  render();
+  try {
+    const data = await api('/api/pet/name', { method: 'PATCH', body: JSON.stringify({ name }) });
+    state.user = data.user;
+    state.lastPetQuote = petSpeech('tap');
+    toast('新名字保存好了');
+  } catch (error) { toast(error.message); }
+  finally { state.petBusy = false; render(); }
+}
+async function buyShopItem(itemId) {
+  state.petBusy = true;
+  render();
+  try {
+    const data = await api('/api/shop/purchase', { method: 'POST', body: JSON.stringify({ itemId, operationId: operationId('buy') }) });
+    state.user = data.user;
+    soundCoinBurst();
+    toast('兑换成功，已经放进背包');
+  } catch (error) { toast(error.message); }
+  finally { state.petBusy = false; render(); }
+}
+async function feedPet(foodId) {
+  const food = PetSystem.foodById(foodId);
+  if (!food) return;
+  state.petBusy = true;
+  render();
+  try {
+    const data = await api('/api/pet/feed', { method: 'POST', body: JSON.stringify({ foodId, operationId: operationId('feed') }) });
+    state.user = data.user;
+    const leveledUp = data.feeding?.newLevel > data.feeding?.oldLevel;
+    state.lastPetQuote = petSpeech(leveledUp ? 'levelUp' : food.quoteScene);
+    if (food.price >= 100) soundSpecial('burst', 8);
+    else soundPop(5);
+    toast(leveledUp ? `${normalizedProgress().pet.name}升级啦！` : `成长值 +${food.growth}`);
+  } catch (error) { toast(error.message); }
+  finally { state.petBusy = false; render(); }
 }
 async function loadUser() {
   if (!state.token) {
@@ -1370,13 +1428,13 @@ document.addEventListener('click', async event => {
   if (pair) return selectPair(Number(pair.dataset.pair));
   const level = event.target.closest('[data-level]');
   if (level) return startLevel(Number(level.dataset.level));
-  const spiritButton = event.target.closest('[data-spirit]');
-  if (spiritButton && spiritButton.dataset.action === 'equip-spirit') return equipSpirit(spiritButton.dataset.spirit);
-  const itemButton = event.target.closest('[data-item]');
-  if (itemButton && itemButton.dataset.action === 'buy-item') return buyItem(itemButton.dataset.item, Number(itemButton.dataset.price));
+  const shopButton = event.target.closest('[data-shop-item]');
+  if (shopButton && shopButton.dataset.action === 'buy-shop-item') return buyShopItem(shopButton.dataset.shopItem);
+  const foodButton = event.target.closest('[data-food-id]');
+  if (foodButton && foodButton.dataset.action === 'feed-pet') return feedPet(foodButton.dataset.foodId);
   const action = event.target.closest('[data-action]')?.dataset.action;
   if (!action) return;
-  if (state.game && ['home', 'leave-game', 'levels', 'draw', 'collection', 'leaderboard', 'profile'].includes(action)) cancelSpeech();
+  if (state.game && ['home', 'leave-game', 'levels', 'pet-home', 'pet-store', 'shop', 'leaderboard', 'profile'].includes(action)) cancelSpeech();
   if (action === 'switch-login' || action === 'switch-register') {
     if (state.auth.busy) return;
     state.auth.phone = document.querySelector('#auth-form input[name="phone"]')?.value || state.auth.phone;
@@ -1398,11 +1456,13 @@ document.addEventListener('click', async event => {
   if (action === 'levels') { state.view = 'levels'; render(); }
   if (action === 'enter-level') {
     state.view = 'game';
+    state.lastPetQuote = petSpeech('start');
     render();
   }
-  if (action === 'draw') { state.view = 'draw'; state.drawResult = null; render(); }
-  if (action === 'draw-card') drawCard();
-  if (action === 'collection') { state.view = 'collection'; render(); }
+  if (action === 'pet-store') { state.view = normalizedProgress().pet.speciesId ? 'pet-home' : 'pet-store'; render(); }
+  if (action === 'pet-home') { state.view = normalizedProgress().pet.speciesId ? 'pet-home' : 'pet-store'; render(); }
+  if (action === 'select-pet') { state.selectedPetId = event.target.closest('[data-pet-id]')?.dataset.petId || SPIRITS[0].id; render(); }
+  if (action === 'pet-tap') { state.lastPetQuote = petSpeech('tap'); soundPop(3); render(); }
   if (action === 'mistakes') { state.view = 'mistakes'; render(); }
   if (action === 'shop') { state.view = 'shop'; render(); }
   if (action === 'leaderboard') openLeaderboard();
@@ -1504,6 +1564,16 @@ document.addEventListener('submit', async event => {
       state.view = 'home';
       render();
     } catch (error) { toast(error.message); }
+  }
+  if (event.target.id === 'pet-adopt-form') {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(event.target).entries());
+    adoptPet(String(payload.speciesId || ''), String(payload.name || '').trim());
+  }
+  if (event.target.id === 'pet-rename-form') {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(event.target).entries());
+    renamePet(String(payload.name || '').trim());
   }
 });
 

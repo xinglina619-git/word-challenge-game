@@ -83,6 +83,7 @@ const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 if (!serverSource.includes("url.pathname === '/pet-system.js'")) throw new Error('本地服务没有提供宠物规则脚本');
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 if (!packageJson.scripts.check.includes('node --check pet-system.js')) throw new Error('语法检查没有覆盖宠物规则脚本');
+const stylesSource = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
 const source = `${fs.readFileSync(path.join(root, 'app.js'), 'utf8')}
 globalThis.__gameTest = {
   newGame, starsForGame, findMatchLines, possibleMoves, expandedRemoval, gradeFor, wordsForLevel, adjacent, swap,
@@ -125,11 +126,22 @@ globalThis.__gameTest = {
   coverageComplete: typeof coverageComplete === 'function' ? coverageComplete : null,
   levelComplete: typeof levelComplete === 'function' ? levelComplete : null,
   unlearnedMove: typeof unlearnedMove === 'function' ? unlearnedMove : null,
-  homeView: typeof homeView === 'function' ? homeView : null
+  homeView: typeof homeView === 'function' ? homeView : null,
+  petStoreView: typeof petStoreView === 'function' ? petStoreView : null,
+  petHomeView: typeof petHomeView === 'function' ? petHomeView : null,
+  shopView: typeof shopView === 'function' ? shopView : null,
+  petSpeech: typeof petSpeech === 'function' ? petSpeech : null
 };`;
 vm.runInContext(source, context, { filename: 'app.js' });
 
 const test = context.__gameTest;
+if (!test.petStoreView || !test.petHomeView || !test.petSpeech) throw new Error('单宠物领取与宠物之家视图尚未实现');
+if (source.includes('function drawView(') || source.includes('function collectionView(') || source.includes('免费成长抽卡') || source.includes('词灵图鉴')) {
+  throw new Error('旧抽卡或多词灵图鉴仍在界面代码中');
+}
+for (const selector of ['.pet-speech-bubble', '.pet-growth-bar', '.food-shop-grid', '.pet-catalog-grid']) {
+  if (!stylesSource.includes(selector)) throw new Error(`宠物界面样式缺失：${selector}`);
+}
 if (!test.faceChoicesForWord || Array.from(test.faceChoicesForWord({ word: 'apple', zh: '苹果' })).join(',') !== 'en,zh') {
   throw new Error('三消展示面选择仍包含图片');
 }
@@ -205,15 +217,30 @@ test.gameState.user = {
   progress: {
     stage: 1, coins: 30, xp: 0, tickets: 1, dust: 0, streak: 0, bestCombo: 0,
     draws: 0, pity: 0, collected: [], mistakes: {}, spirits: { lingling: 1 },
-    equipped: 'lingling', inventory: { hint: 3, shuffle: 2, addMoves: 1 }, tutorials: { match3: false, pair: false }
+    equipped: 'lingling', inventory: { hint: 3, shuffle: 2, addMoves: 1 }, tutorials: { match3: false, pair: false },
+    pet: { speciesId: '', name: '', growth: 0, foodInventory: {} }
   }
+};
+const unclaimedHome = test.homeView();
+if (!unclaimedHome.includes('领取我的学习伙伴') || !unclaimedHome.includes('每个账号只能选择一只')) throw new Error('未领取宠物的首页引导不完整');
+const petStore = test.petStoreView();
+if ((petStore.match(/class="pet-catalog-card/g) || []).length !== 8) throw new Error('宠物商店没有展示8种可选宠物');
+if (!petStore.includes('领取后可以随时免费改名') || !petStore.includes('宠物品类不能更换')) throw new Error('宠物永久选择提示不明确');
+test.gameState.user.progress.pet = {
+  speciesId: 'cloud', name: '小云', adoptedAt: '2026-08-24T00:00:00.000Z', growth: 70,
+  foodInventory: { starBiscuit: 2, fruitCup: 0, nutritionMeal: 0, celebrationCake: 0 }
 };
 const home = test.homeView();
 if (!home.includes('继续学习') || !home.includes('成长奖励')) throw new Error('首页没有区分学习和奖励入口');
 if (home.indexOf('继续学习') > home.indexOf('成长奖励')) throw new Error('首页没有优先展示学习入口');
-if (!home.includes('开始消除')) throw new Error('首页主学习按钮缺失');
+if (!home.includes('开始学习')) throw new Error('首页主学习按钮缺失');
 if (!home.includes('自动依次朗读英文和中文') || !home.includes('词块随后直接消失')) throw new Error('首次首页没有准确说明消除后的双语自动朗读与直接消失');
 if (home.includes('再听') || home.includes('弹出')) throw new Error('首次首页仍承诺已移除的重听卡或弹出反馈');
+const petHome = test.petHomeView();
+if (!petHome.includes('小云 · Lv.2') || !petHome.includes('库存 2') || !petHome.includes('宠物不会饥饿、生病或退级')) throw new Error('宠物之家缺少等级、食物背包或无压力说明');
+const petShop = test.shopView();
+if (!petShop.includes('星星饼干') || !petShop.includes('庆典蛋糕') || !petShop.includes('智慧镜')) throw new Error('金币商店没有同时展示食物和学习道具');
+if (!petShop.includes('不含充值、付费或随机抽取')) throw new Error('金币商店没有说明纯学习兑换规则');
 test.gameState.user.progress.collected = ['apple'];
 test.gameState.tip = 1;
 const rotatingTipHome = test.homeView();
