@@ -114,15 +114,25 @@
   }
 
   function selectReviewWords(input, count, random = Math.random) {
-    return normalizeLearnedWords(input)
+    const wanted = Math.max(0, Number(count) || 0);
+    const sorted = normalizeLearnedWords(input)
       .filter(item => item.word && item.zh)
       .map(item => ({ item, tie: Number(random()) || 0 }))
       .sort((a, b) => b.item.wrongCount - a.item.wrongCount
         || String(a.item.lastReviewedAt || '').localeCompare(String(b.item.lastReviewedAt || ''))
         || a.item.reviewCount - b.item.reviewCount
         || a.tie - b.tie)
-      .slice(0, Math.max(0, Number(count) || 0))
       .map(entry => ({ ...entry.item }));
+    const selected = [];
+    const deferred = [];
+    const meanings = new Set();
+    sorted.forEach(item => {
+      if (!meanings.has(item.zh) && selected.length < wanted) {
+        selected.push(item);
+        meanings.add(item.zh);
+      } else deferred.push(item);
+    });
+    return [...selected, ...deferred].slice(0, wanted);
   }
 
   function buildMeaningChoices(target, entries, random = Math.random) {

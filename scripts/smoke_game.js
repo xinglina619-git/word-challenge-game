@@ -97,12 +97,14 @@ const recorded = review.recordLearnedWord([], 'Apple', '苹果', 'correct', '202
 if (recorded.length !== 1 || recorded[0].word !== 'apple' || recorded[0].encounters !== 1) throw new Error('已学词记录没有正确规范化');
 if (review.selectReviewWords(learnedForReview, 5, () => .5).length !== 5) throw new Error('特殊关选题数量不正确');
 const indexSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-if (!indexSource.includes('/review-games.js?v=1')) throw new Error('首页没有在 app.js 前加载复习关规则');
-if (!indexSource.includes('/pet-system.js?v=1')) throw new Error('首页没有在 app.js 前加载宠物规则');
+if (!indexSource.includes('/review-games.js?v=2')) throw new Error('首页没有在 app.js 前加载复习关规则');
+if (!indexSource.includes('/pet-system.js?v=2')) throw new Error('首页没有在 app.js 前加载宠物规则');
 const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 if (!serverSource.includes("url.pathname === '/pet-system.js'")) throw new Error('本地服务没有提供宠物规则脚本');
+if (!serverSource.includes("url.pathname === '/review-games.js'")) throw new Error('本地服务没有提供复习关规则脚本');
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 if (!packageJson.scripts.check.includes('node --check pet-system.js')) throw new Error('语法检查没有覆盖宠物规则脚本');
+if (!packageJson.scripts.check.includes('node --check review-games.js')) throw new Error('语法检查没有覆盖复习关规则脚本');
 const stylesSource = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
 const source = `${fs.readFileSync(path.join(root, 'app.js'), 'utf8')}
 globalThis.__gameTest = {
@@ -150,12 +152,70 @@ globalThis.__gameTest = {
   petStoreView: typeof petStoreView === 'function' ? petStoreView : null,
   petHomeView: typeof petHomeView === 'function' ? petHomeView : null,
   shopView: typeof shopView === 'function' ? shopView : null,
-  petSpeech: typeof petSpeech === 'function' ? petSpeech : null
+  petSpeech: typeof petSpeech === 'function' ? petSpeech : null,
+  petTargetMessage: typeof petTargetMessage === 'function' ? petTargetMessage : null,
+  newSpellingGame: typeof newSpellingGame === 'function' ? newSpellingGame : null,
+  spellingView: typeof spellingView === 'function' ? spellingView : null,
+  spellingAnswer: typeof spellingAnswer === 'function' ? spellingAnswer : null,
+  chooseSpellingLetter: typeof chooseSpellingLetter === 'function' ? chooseSpellingLetter : null,
+  undoSpellingLetter: typeof undoSpellingLetter === 'function' ? undoSpellingLetter : null,
+  applySpellingAnswer: typeof applySpellingAnswer === 'function' ? applySpellingAnswer : null,
+  newFallingGame: typeof newFallingGame === 'function' ? newFallingGame : null,
+  fallingView: typeof fallingView === 'function' ? fallingView : null,
+  applyFallingChoice: typeof applyFallingChoice === 'function' ? applyFallingChoice : null,
+  pauseFallingTimer: typeof pauseFallingTimer === 'function' ? pauseFallingTimer : null,
+  resumeFallingTimer: typeof resumeFallingTimer === 'function' ? resumeFallingTimer : null,
+  clearFallingTimer: typeof clearFallingTimer === 'function' ? clearFallingTimer : null,
+  scheduleFallingQuestion: typeof scheduleFallingQuestion === 'function' ? scheduleFallingQuestion : null
 };`;
 vm.runInContext(source, context, { filename: 'app.js' });
 
 const test = context.__gameTest;
 if (!test.petStoreView || !test.petHomeView || !test.petSpeech) throw new Error('单宠物领取与宠物之家视图尚未实现');
+if (!test.newSpellingGame || !test.spellingView || !test.applySpellingAnswer) throw new Error('两题拼写复习关尚未实现');
+const spelling = test.newSpellingGame(20, [{ word: 'apple', zh: '苹果' }, { word: 'cloud', zh: '云' }], () => .5);
+if (spelling.mode !== 'spelling' || spelling.questions.length !== 2 || spelling.questionIndex !== 0 || spelling.retryCount !== 0 || spelling.done !== 0) throw new Error('拼写关初始状态不正确');
+if (Array.from(spelling.questions[0].letters, item => item.letter).sort().join('') !== [...'apple'].sort().join('')) throw new Error('拼写关字母没有完整打乱');
+if (!test.spellingView(spelling).includes('苹果')) throw new Error('拼写关没有突出中文释义');
+const repeatedLetterGame = test.newSpellingGame(20, [{ word: 'apple', zh: '苹果' }, { word: 'book', zh: '书' }], () => .5);
+const appleQuestion = repeatedLetterGame.questions[0];
+const available = appleQuestion.letters.map((item, index) => ({ ...item, uiIndex: index }));
+appleQuestion.selectedIndices = [];
+for (const letter of appleQuestion.word) {
+  const match = available.find(item => item.letter === letter && !appleQuestion.selectedIndices.includes(item.uiIndex));
+  appleQuestion.selectedIndices.push(match.uiIndex);
+}
+if (test.spellingAnswer(repeatedLetterGame) !== 'apple') throw new Error('拼写关没有正确处理重复字母索引');
+if (test.applySpellingAnswer(repeatedLetterGame).status !== 'correct') throw new Error('正确拼写没有进入下一题');
+const retryGame = test.newSpellingGame(20, [{ word: 'apple', zh: '苹果' }, { word: 'cloud', zh: '云' }], () => .5);
+retryGame.questions[0].selectedIndices = [0];
+if (test.applySpellingAnswer(retryGame).status !== 'retry' || retryGame.retryCount !== 1 || retryGame.questionIndex !== 0) throw new Error('首次拼错没有纠正并重试同一词');
+retryGame.questions[0].selectedIndices = [0];
+if (test.applySpellingAnswer(retryGame).status !== 'failed') throw new Error('同一词第二次拼错没有判定失败');
+if (!test.newFallingGame || !test.fallingView || !test.applyFallingChoice || !test.clearFallingTimer) throw new Error('五题单词落体关尚未实现');
+const fallingWords = learnedForReview.slice(0, 5);
+const falling = test.newFallingGame(60, fallingWords, false, () => .5);
+if (falling.mode !== 'falling' || falling.questions.length !== 5 || falling.durationMs !== 6000) throw new Error('落体关题量或三四年级时限不正确');
+if (falling.questions.some(question => question.choices.length !== 3 || new Set(question.choices).size !== 3)) throw new Error('落体关没有提供三个唯一中文释义');
+if (!test.fallingView(falling).includes('第 1/5 题')) throw new Error('落体关没有显示固定进度');
+const firstFalling = falling.questions[0];
+const correctChoice = firstFalling.choices.indexOf(firstFalling.zh);
+if (test.applyFallingChoice(falling, correctChoice, 2000).status !== 'correct' || falling.remainingRatios[0] !== 2 / 3) throw new Error('落体关正确选择没有记录剩余时间');
+const wrongFalling = test.newFallingGame(60, fallingWords, false, () => .5);
+const wrongIndex = wrongFalling.questions[0].choices.findIndex(choice => choice !== wrongFalling.questions[0].zh);
+if (test.applyFallingChoice(wrongFalling, wrongIndex, 1000).status !== 'failed') throw new Error('落体关选错没有立即失败');
+const tutorialFalling = test.newFallingGame(20, fallingWords, true, () => .5);
+const tutorialWrong = tutorialFalling.tutorialQuestion.choices.findIndex(choice => choice !== tutorialFalling.tutorialQuestion.zh);
+if (test.applyFallingChoice(tutorialFalling, tutorialWrong, 1000).status !== 'tutorial-retry' || tutorialFalling.done !== 0) throw new Error('首次落体引导题答错后不应失败或计数');
+const tutorialCorrect = tutorialFalling.tutorialQuestion.choices.indexOf(tutorialFalling.tutorialQuestion.zh);
+if (test.applyFallingChoice(tutorialFalling, tutorialCorrect, 1000).status !== 'tutorial-complete' || tutorialFalling.done !== 0) throw new Error('首次落体引导题完成后不应占用正式5题');
+const transitionPauseGame = test.newFallingGame(20, fallingWords, false, () => .5);
+test.gameState.game = transitionPauseGame;
+test.scheduleFallingQuestion(10_000);
+test.pauseFallingTimer();
+if (!transitionPauseGame.pendingQuestionStart) throw new Error('落体题切换等待期间进入后台没有暂停待启动计时');
+test.clearFallingTimer();
+test.gameState.game = null;
 if (source.includes('function drawView(') || source.includes('function collectionView(') || source.includes('免费成长抽卡') || source.includes('词灵图鉴')) {
   throw new Error('旧抽卡或多词灵图鉴仍在界面代码中');
 }
@@ -261,6 +321,7 @@ if (!petHome.includes('小云 · Lv.2') || !petHome.includes('库存 2') || !pet
 const petShop = test.shopView();
 if (!petShop.includes('星星饼干') || !petShop.includes('庆典蛋糕') || !petShop.includes('智慧镜')) throw new Error('金币商店没有同时展示食物和学习道具');
 if (!petShop.includes('不含充值、付费或随机抽取')) throw new Error('金币商店没有说明纯学习兑换规则');
+if (!test.petTargetMessage({ ...test.gameState.user.progress, coins: 30 }).includes('金币已经够买星星饼干')) throw new Error('金币足够时仍提示只能继续赚钱，没有给出可执行的喂养目标');
 test.gameState.user.progress.collected = ['apple'];
 test.gameState.tip = 1;
 const rotatingTipHome = test.homeView();
@@ -562,7 +623,7 @@ async function runAsyncRegressionTests() {
 }
 
 runAsyncRegressionTests().then(() => {
-  console.log('GAME_SMOKE=PASS levels=7 board=6x6 match3=PASS pair=PASS missions=PASS praise=PASS pictures=PASS rainbow=PASS audio=PASS tutorial=PASS coverage=PASS pet=PASS auth=PASS register-status=PASS');
+  console.log('GAME_SMOKE=PASS levels=7 board=6x6 match3=PASS pair=PASS missions=PASS praise=PASS pictures=PASS rainbow=PASS audio=PASS tutorial=PASS coverage=PASS pet=PASS economy=PASS review=PASS spelling=PASS falling=PASS timer=PASS auth=PASS register-status=PASS');
 }).catch(error => {
   console.error(error);
   process.exitCode = 1;

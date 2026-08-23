@@ -131,6 +131,7 @@ const GRADED = window.GAME_CONTENT.gradedMain;
 const GRADE4 = window.GAME_CONTENT.grade4Book.units;
 const TEXTBOOK = window.TEXTBOOK_WORDS?.grades || {};
 let audioContext;
+let learnedWordQueue = Promise.resolve();
 
 function esc(value = '') {
   return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
@@ -150,6 +151,12 @@ function api(path, options = {}) {
     if (!response.ok) throw new Error(data.error || '请求失败');
     return data;
   });
+}
+function syncLearnedWord(word, result) {
+  learnedWordQueue = learnedWordQueue.catch(() => {}).then(() => api('/api/learned-word', {
+    method: 'POST', body: JSON.stringify({ word, result })
+  }));
+  return learnedWordQueue;
 }
 function normalizedProgress() {
   const p = state.user.progress ||= {};
@@ -173,12 +180,16 @@ function normalizedProgress() {
   p.pity = Math.max(0, Number(p.pity || 0));
   p.bestCombo = Math.max(0, Number(p.bestCombo || 0));
   p.pet = PetSystem.normalizePetState(p.pet);
+  p.learnedWords = ReviewGames.normalizeLearnedWords(p.learnedWords || p.collected);
+  p.review = ReviewGames.normalizeReview(p.review);
   p.migrationVersion = Math.max(0, Number(p.migrationVersion || 0));
   return p;
 }
 function titleFor(stage) { return TITLES[Math.min(9, Math.floor((Math.max(1, stage) - 1) / 10))]; }
 function gradeFor(level) { return Math.min(5, Math.ceil(level / 20)); }
 function starsForGame(game) {
+  if (game.mode === 'spelling') return ReviewGames.starsForSpelling(game.retryCount);
+  if (game.mode === 'falling') return ReviewGames.starsForFalling(game.remainingRatios);
   if (game.mode === 'pair') {
     if (game.pairMistakes === 0) return 3;
     if (game.pairMistakes <= 2) return 2;
@@ -426,7 +437,9 @@ function petTargetMessage(progress) {
   const pet = progress.pet;
   if (!pet.speciesId) return '先领取一只属于你的学习伙伴吧！';
   if (pet.level >= 10) return `${pet.name}已经成为最佳学习伙伴，继续一起认识新单词吧！`;
-  const nextFood = PetSystem.FOODS.find(food => progress.coins < food.price) || PetSystem.FOODS.at(-1);
+  const affordable = PetSystem.FOODS.filter(food => progress.coins >= food.price).at(-1);
+  if (affordable) return `金币已经够买${affordable.name}，可以去商店为${pet.name}准备一份！`;
+  const nextFood = PetSystem.FOODS[0];
   if (progress.coins < nextFood.price) return `再赚 ${nextFood.price - progress.coins} 金币，就可以买${nextFood.name}啦！`;
   return `还差 ${PetSystem.nextGrowthTarget(pet.level) - pet.growth} 点成长值，${pet.name}就能升级了！`;
 }
@@ -462,7 +475,7 @@ function modeForLevel(level) {
 }
 function missionForLevel(level) {
   if (level % 10 === 0) return { type: 'boss', name: '错词Boss战', icon: '👾', bonus: '击败Boss，错词强化训练' };
-  if (level % 5 === 0) return { type: 'treasure', name: '星愿宝箱关', icon: '🎁', bonus: '通关额外获得金币和抽卡券' };
+  if (level % 5 === 0) return { type: 'treasure', name: '星愿宝箱关', icon: '🎁', bonus: '通关额外获得学习金币' };
   return { type: 'normal', name: modeForLevel(level) === 'match3' ? '单词三消战' : '中英配对战', icon: modeForLevel(level) === 'match3' ? '💥' : '🔗', bonus: '完成挑战，积累词灵成长能量' };
 }
 function makePairs(words) {
@@ -629,6 +642,291 @@ function newGame(level) {
   if (mode === 'pair') game.target = words[0];
   return game;
 }
+function newSpellingGame(level, words, random = Math.random) {
+  const selected = ReviewGames.selectReviewWords(words, 2, random);
+  return {
+    runId: `${Date.now()}-${level}-spell-${Math.random().toString(36).slice(2, 10)}`,
+    level,
+    grade: gradeFor(level),
+    mode: 'spelling',
+    mission: { type: 'normal', name: '字母拼写挑战', icon: '🔤', bonus: '连续复习2个学过的单词，通关额外获得20金币' },
+    questions: selected.map(item => ({ ...item, letters: ReviewGames.shuffledLetters(item.word, random), selectedIndices: [], wrongAttempts: 0 })),
+    questionIndex: 0,
+    retryCount: 0,
+    done: 0,
+    score: 0,
+    combo: 0,
+    maxCombo: 0,
+    sessionCoins: 0,
+    busy: false,
+    message: '听发音、看中文，再按顺序点出英文单词',
+    petQuote: ''
+  };
+}
+function currentSpellingQuestion(game) { return game?.questions?.[game.questionIndex] || null; }
+function spellingAnswer(game = state.game) {
+  const question = currentSpellingQuestion(game);
+  return question ? question.selectedIndices.map(index => question.letters[index]?.letter || '').join('') : '';
+}
+function chooseSpellingLetter(index, game = state.game) {
+  const question = currentSpellingQuestion(game);
+  if (!question || game.busy || question.selectedIndices.includes(index) || !question.letters[index]) return false;
+  question.selectedIndices.push(index);
+  if (game === state.game) render();
+  return true;
+}
+function undoSpellingLetter(game = state.game) {
+  const question = currentSpellingQuestion(game);
+  if (!question || game.busy || !question.selectedIndices.length) return false;
+  question.selectedIndices.pop();
+  if (game === state.game) render();
+  return true;
+}
+function clearSpellingLetters(game = state.game) {
+  const question = currentSpellingQuestion(game);
+  if (!question || game.busy) return false;
+  question.selectedIndices = [];
+  if (game === state.game) render();
+  return true;
+}
+function applySpellingAnswer(game) {
+  const question = currentSpellingQuestion(game);
+  if (!question) return { status: 'failed' };
+  const answer = spellingAnswer(game);
+  if (answer === question.word.replace(/[^a-z]/gi, '').toLowerCase()) {
+    game.done += 1;
+    game.score += 200;
+    game.combo += 1;
+    game.maxCombo = Math.max(game.maxCombo, game.combo);
+    game.questionIndex += 1;
+    return { status: game.done >= game.questions.length ? 'complete' : 'correct', question };
+  }
+  question.wrongAttempts += 1;
+  game.retryCount += 1;
+  game.combo = 0;
+  question.selectedIndices = [];
+  return { status: question.wrongAttempts >= 2 ? 'failed' : 'retry', question };
+}
+function spellingView(game) {
+  const question = currentSpellingQuestion(game);
+  if (!question) return '<main class="spelling-page"><p>正在准备拼写题…</p></main>';
+  const answer = spellingAnswer(game);
+  return `<main class="game-page spelling-page">
+    <div class="special-game-head"><button data-action="leave-game">‹</button><div><small>低频复习关 · 第 ${game.level} 关</small><b>字母拼写 ${Math.min(game.done + 1, 2)}/2</b></div><span>答错 ${game.retryCount} 次</span></div>
+    <div class="goal-progress"><i style="width:${game.done / 2 * 100}%"></i></div>
+    <section class="spelling-card">
+      <small>看中文，听英文</small><h1>${esc(question.zh)}</h1>
+      <button class="listen-word-button" data-speak-word="${esc(question.word)}" aria-label="播放这个英文单词">🔊 播放英文发音</button>
+      <div class="spelling-slots" aria-label="当前拼写">${[...question.word.replace(/[^a-z]/gi, '')].map((_, index) => `<span>${esc(answer[index] || '')}</span>`).join('')}</div>
+      <div class="spelling-letters">${question.letters.map((item, index) => `<button data-spelling-letter="${index}" aria-label="选择字母 ${item.letter}" ${question.selectedIndices.includes(index) || game.busy ? 'disabled' : ''}>${item.letter.toUpperCase()}</button>`).join('')}</div>
+      <p class="game-message">${esc(game.message)}</p>
+      ${game.petQuote ? `<div class="pet-speech-bubble"><p>${esc(game.petQuote)}</p></div>` : ''}
+      <div class="spelling-actions"><button data-action="undo-spelling" ${!question.selectedIndices.length || game.busy ? 'disabled' : ''}>撤回一个</button><button data-action="clear-spelling" ${!question.selectedIndices.length || game.busy ? 'disabled' : ''}>重新选择</button><button class="primary" data-action="submit-spelling" ${answer.length !== question.word.replace(/[^a-z]/gi, '').length || game.busy ? 'disabled' : ''}>确认拼写</button></div>
+    </section>
+  </main>`;
+}
+let fallingTimerHandle = null;
+let fallingTransitionHandle = null;
+function newFallingGame(level, words, tutorialActive = false, random = Math.random) {
+  const selected = ReviewGames.selectReviewWords(words, 5, random);
+  const questions = selected.map(item => ({ ...item, choices: ReviewGames.buildMeaningChoices(item, selected, random) }));
+  const durationMs = ReviewGames.fallDurationForGrade(gradeFor(level));
+  return {
+    runId: `${Date.now()}-${level}-fall-${Math.random().toString(36).slice(2, 10)}`,
+    level,
+    grade: gradeFor(level),
+    mode: 'falling',
+    mission: { type: 'normal', name: '单词落体挑战', icon: '🪂', bonus: '连续认出5个学过的单词，通关额外获得30金币' },
+    questions,
+    tutorialQuestion: tutorialActive && questions[0] ? { ...questions[0], choices: [...questions[0].choices] } : null,
+    tutorialActive: Boolean(tutorialActive && questions[0]),
+    questionIndex: 0,
+    durationMs,
+    remainingMs: durationMs,
+    remainingRatios: [],
+    startedAt: 0,
+    timerRunning: false,
+    pendingQuestionStart: false,
+    done: 0,
+    score: 0,
+    combo: 0,
+    maxCombo: 0,
+    sessionCoins: 0,
+    busy: false,
+    message: tutorialActive ? '这是不会失败的练习题：看英文，选择正确中文' : '在单词落到底部前，选出正确中文释义',
+    petQuote: ''
+  };
+}
+function currentFallingQuestion(game = state.game) {
+  return game?.tutorialActive ? game.tutorialQuestion : game?.questions?.[game.questionIndex] || null;
+}
+function applyFallingChoice(game, choiceIndex, elapsedMs = 0) {
+  const question = currentFallingQuestion(game);
+  if (!question) return { status: 'failed' };
+  const correct = question.choices[choiceIndex] === question.zh;
+  if (game.tutorialActive) {
+    if (!correct) return { status: 'tutorial-retry', question };
+    game.tutorialActive = false;
+    game.remainingMs = game.durationMs;
+    return { status: 'tutorial-complete', question };
+  }
+  if (!correct) return { status: 'failed', question };
+  const ratio = Math.max(0, Math.min(1, (game.durationMs - Math.max(0, elapsedMs)) / game.durationMs));
+  game.remainingRatios.push(ratio);
+  game.done += 1;
+  game.score += 180 + Math.round(ratio * 80);
+  game.combo += 1;
+  game.maxCombo = Math.max(game.maxCombo, game.combo);
+  game.questionIndex += 1;
+  game.remainingMs = game.durationMs;
+  return { status: game.done >= game.questions.length ? 'complete' : 'correct', question };
+}
+function fallingView(game) {
+  const question = currentFallingQuestion(game);
+  if (!question) return '<main class="falling-page"><p>正在准备落体题…</p></main>';
+  const progress = game.tutorialActive ? '引导题' : `第 ${Math.min(game.done + 1, 5)}/5 题`;
+  const animationState = game.timerRunning ? 'running' : 'paused';
+  return `<main class="game-page falling-page">
+    <div class="special-game-head"><button data-action="leave-game">‹</button><div><small>低频复习关 · 第 ${game.level} 关</small><b>${progress}</b></div><span>${Math.ceil(game.remainingMs / 1000)}秒</span></div>
+    <div class="goal-progress"><i style="width:${game.done / 5 * 100}%"></i></div>
+    ${game.tutorialActive ? '<div class="falling-tutorial-note"><b>第一次练习，不会失败</b><span>看清下落的英文，再点下方正确中文；答错会继续提示。</span></div>' : ''}
+    <section class="falling-arena" style="--fall-duration:${Math.max(100, game.remainingMs)}ms;--fall-state:${animationState}">
+      <div class="falling-word"><small>English</small><b>${esc(question.word)}</b></div>
+      <div class="fall-guide" aria-hidden="true">↓ 在到底前选择 ↓</div>
+    </section>
+    <p class="game-message">${esc(game.message)}</p>
+    ${game.petQuote ? `<div class="pet-speech-bubble"><p>${esc(game.petQuote)}</p></div>` : ''}
+    <div class="falling-choices">${question.choices.map((choice, index) => `<button data-falling-choice="${index}" ${game.busy ? 'disabled' : ''}>${esc(choice)}</button>`).join('')}</div>
+  </main>`;
+}
+function clearFallingTimer() {
+  if (fallingTimerHandle != null) clearTimeout(fallingTimerHandle);
+  if (fallingTransitionHandle != null) clearTimeout(fallingTransitionHandle);
+  fallingTimerHandle = null;
+  fallingTransitionHandle = null;
+  if (state.game?.mode === 'falling') state.game.timerRunning = false;
+}
+function scheduleFallingQuestion(delay) {
+  if (fallingTransitionHandle != null) clearTimeout(fallingTransitionHandle);
+  fallingTransitionHandle = setTimeout(() => {
+    fallingTransitionHandle = null;
+    if (document.hidden) {
+      if (state.game?.mode === 'falling') state.game.pendingQuestionStart = true;
+      return;
+    }
+    startFallingQuestion();
+  }, delay);
+}
+function pauseFallingTimer() {
+  const game = state.game;
+  if (!game || game.mode !== 'falling') return;
+  if (!game.timerRunning) {
+    if (fallingTransitionHandle != null) {
+      clearTimeout(fallingTransitionHandle);
+      fallingTransitionHandle = null;
+      game.pendingQuestionStart = true;
+    }
+    return;
+  }
+  game.remainingMs = Math.max(0, game.remainingMs - (Date.now() - game.startedAt));
+  clearFallingTimer();
+}
+function resumeFallingTimer() {
+  const game = state.game;
+  if (!game || game.mode !== 'falling' || state.view !== 'game' || game.timerRunning) return;
+  if (game.pendingQuestionStart) {
+    game.pendingQuestionStart = false;
+    startFallingQuestion();
+    return;
+  }
+  if (game.busy) return;
+  game.startedAt = Date.now();
+  game.timerRunning = true;
+  fallingTimerHandle = setTimeout(handleFallingTimeout, Math.max(1, game.remainingMs));
+  render();
+}
+function startFallingQuestion() {
+  const game = state.game;
+  if (!game || game.mode !== 'falling') return;
+  clearFallingTimer();
+  game.remainingMs = game.durationMs;
+  game.busy = false;
+  resumeFallingTimer();
+}
+async function chooseFallingMeaning(index) {
+  const game = state.game;
+  const question = currentFallingQuestion(game);
+  if (!game || game.mode !== 'falling' || !question || game.busy) return;
+  pauseFallingTimer();
+  game.busy = true;
+  const elapsedMs = game.durationMs - game.remainingMs;
+  const outcome = applyFallingChoice(game, index, elapsedMs);
+  if (outcome.status === 'tutorial-retry') {
+    game.message = `提示：${question.word} 的意思是“${question.zh}”，再选一次吧`;
+    game.petQuote = petSpeech('retry');
+    soundWrong();
+    game.busy = false;
+    render();
+    scheduleFallingQuestion(650);
+    return;
+  }
+  if (outcome.status === 'tutorial-complete') {
+    game.message = '练习完成！现在开始正式5题';
+    game.petQuote = petSpeech('start');
+    soundPop(4);
+    try {
+      const data = await api('/api/review/tutorial-complete', { method: 'POST', body: '{}' });
+      state.user = data.user;
+    } catch {}
+    game.busy = false;
+    render();
+    scheduleFallingQuestion(750);
+    return;
+  }
+  if (outcome.status === 'failed') {
+    recordMistake(question);
+    syncLearnedWord(question.word, 'wrong').catch(() => {});
+    game.message = `正确答案是“${question.zh}”`;
+    game.petQuote = petSpeech('retry');
+    soundWrong();
+    game.busy = false;
+    return finishLevel(false);
+  }
+  game.message = `${question.word} = ${question.zh}，答对啦！`;
+  game.petQuote = petSpeech('combo');
+  soundSpecial('pop', 5 + game.combo);
+  try {
+    const data = await syncLearnedWord(question.word, 'review');
+    state.user = data.user;
+  } catch {}
+  await speakReviewWordAndWait(question);
+  render();
+  await sleep(250);
+  game.busy = false;
+  if (outcome.status === 'complete') return finishLevel(true);
+  startFallingQuestion();
+}
+function handleFallingTimeout() {
+  const game = state.game;
+  const question = currentFallingQuestion(game);
+  if (!game || game.mode !== 'falling' || !question) return;
+  fallingTimerHandle = null;
+  game.timerRunning = false;
+  game.remainingMs = 0;
+  if (game.tutorialActive) {
+    game.message = `时间到了也没关系：${question.word} 是“${question.zh}”，再练一次`;
+    game.petQuote = petSpeech('retry');
+    render();
+    scheduleFallingQuestion(850);
+    return;
+  }
+  recordMistake(question);
+  syncLearnedWord(question.word, 'wrong').catch(() => {});
+  game.message = `时间到，正确答案是“${question.zh}”`;
+  game.petQuote = petSpeech('retry');
+  soundWrong();
+  finishLevel(false);
+}
 function completeTutorial(game) {
   if (!game?.tutorial?.active) return;
   const progress = normalizedProgress();
@@ -716,6 +1014,8 @@ function recordMistake(word) {
 function recordMastered(word) {
   const p = normalizedProgress();
   if (!p.collected.includes(word.word)) p.collected.push(word.word);
+  p.learnedWords = ReviewGames.recordLearnedWord(p.learnedWords, word.word, word.zh, 'correct');
+  syncLearnedWord(word.word, 'correct').catch(() => {});
   const mistake = p.mistakes[word.word];
   if (mistake) {
     mistake.correctStreak = (mistake.correctStreak || 0) + 1;
@@ -723,12 +1023,69 @@ function recordMastered(word) {
     if (mistake.correctStreak >= 2) delete p.mistakes[word.word];
   }
 }
+async function submitSpellingAnswer() {
+  const game = state.game;
+  const question = currentSpellingQuestion(game);
+  if (!game || game.mode !== 'spelling' || !question || game.busy) return;
+  game.busy = true;
+  const outcome = applySpellingAnswer(game);
+  if (outcome.status === 'correct' || outcome.status === 'complete') {
+    game.message = `${question.word} 拼写正确！`;
+    game.petQuote = petSpeech('combo');
+    soundSpecial('pop', 5 + game.combo);
+    try {
+      const data = await syncLearnedWord(question.word, 'review');
+      state.user = data.user;
+    } catch {}
+    speakWord(question.word);
+    if (outcome.status === 'complete') {
+      game.busy = false;
+      return finishLevel(true);
+    }
+    game.busy = false;
+    render();
+    return;
+  }
+  recordMistake(question);
+  syncLearnedWord(question.word, 'wrong').catch(() => {});
+  game.message = `正确拼写是 ${question.word.toUpperCase()}，再认真试一次`;
+  game.petQuote = petSpeech('retry');
+  soundWrong();
+  speakWord(question.word);
+  game.busy = false;
+  if (outcome.status === 'failed') return finishLevel(false);
+  render();
+}
 async function speakWords(records) {
   if (!state.audio.speech || !('speechSynthesis' in window) || !records.length) return;
   const voices = await waitForSystemVoices();
   records.slice(0, 3).flatMap(record => createLearningUtterances(record, voices)).forEach((line, index) => {
     if (!index) lastLearningVoiceURI = line.voice?.voiceURI || '';
     window.speechSynthesis.speak(line);
+  });
+}
+function syncLearnedWord(word, result) {
+  learnedWordQueue = learnedWordQueue.catch(() => {}).then(() => api('/api/learned-word', {
+    method: 'POST', body: JSON.stringify({ word, result })
+  }));
+  return learnedWordQueue;
+}
+async function speakReviewWordAndWait(record) {
+  if (!state.audio.speech || !('speechSynthesis' in window) || !record) return;
+  const voices = await waitForSystemVoices();
+  const lines = createLearningUtterances(record, voices);
+  if (!lines.length) return;
+  cancelSpeech();
+  await new Promise(resolve => {
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
+    lines.at(-1).onend = done;
+    lines.at(-1).onerror = done;
+    lines.forEach((line, index) => {
+      if (!index) lastLearningVoiceURI = line.voice?.voiceURI || '';
+      window.speechSynthesis.speak(line);
+    });
+    setTimeout(done, 2600);
   });
 }
 function praiseForEffect(kind, count = 3, combo = 1) {
@@ -925,21 +1282,26 @@ async function selectPair(index) {
 async function finishLevel(win) {
   const game = state.game;
   if (!game) return;
+  clearFallingTimer();
+  try { await learnedWordQueue; } catch {}
   if (!win) {
-    state.result = { win: false, level: game.level, score: game.score, combo: game.maxCombo, learned: game.learnedTypes.length, petQuote: petSpeech('retry') };
+    persistProgress().catch(() => {});
+    state.result = { win: false, level: game.level, mode: game.mode, score: game.score || 0, combo: game.maxCombo || 0, learned: game.learnedTypes?.length ?? game.done ?? 0, petQuote: petSpeech('retry') };
     state.view = 'result';
     render();
     return;
   }
   const stars = starsForGame(game);
   const missionCoins = game.mission.type === 'treasure' ? 30 : game.mission.type === 'boss' ? 20 : 0;
+  const specialCoins = game.mode === 'spelling' ? 20 : game.mode === 'falling' ? 30 : 0;
   const fallbackReward = {
-    coins: 12 + game.grade * 4 + stars * 4 + game.sessionCoins + missionCoins,
+    coins: 12 + game.grade * 4 + stars * 4 + game.sessionCoins + missionCoins + specialCoins,
     xp: 30 + game.grade * 8 + stars * 5 + (game.mission.type === 'boss' ? 20 : 0)
   };
   let reward = fallbackReward;
   let saved = false;
   try {
+    await persistProgress();
     const data = await api('/api/game/complete', {
       method: 'POST',
       body: JSON.stringify({
@@ -963,7 +1325,7 @@ async function finishLevel(win) {
     level: game.level,
     score: game.score,
     combo: game.maxCombo,
-    learned: game.learnedTypes.length,
+    learned: game.learnedTypes?.length ?? game.done ?? 0,
     stars,
     xp: reward.xp,
     coins: reward.coins,
@@ -1053,7 +1415,7 @@ function authView() {
       ${state.auth.error ? `<div class="form-error" role="alert" tabindex="-1">${esc(state.auth.error)}</div>` : ''}
       <button class="primary" type="submit" ${state.auth.busy ? 'disabled' : ''}>${authSubmitLabel(mode, state.auth.busy)}</button>
       ${login ? '<button class="auth-help" type="button" data-action="forgot-password">忘记密码？在本机恢复</button>' : ''}
-    </form><small class="privacy">家庭试玩版，不展示手机号，不包含付费抽卡。</small>
+    </form><small class="privacy">家庭试玩版，不展示手机号，不包含充值或付费内容。</small>
   </section></main>`;
 }
 
@@ -1125,12 +1487,17 @@ function homeView() {
 function levelIntroView() {
   const game = state.game;
   if (!game) return homeView();
-  const modeText = game.mode === 'match3' ? `自由寻找三连，达到 ${game.scoreGoal} 分并认识 ${game.coverageGoal} 个不同单词` : '点击一个中文词牌和它对应的英文词牌';
+  const modeDetails = {
+    match3: { icon: '💥', name: '三消战斗', text: `自由寻找三连，达到 ${game.scoreGoal} 分并认识 ${game.coverageGoal} 个不同单词` },
+    pair: { icon: '🔗', name: '中英配对', text: '点击一个中文词牌和它对应的英文词牌' },
+    spelling: { icon: '🔤', name: '字母拼写', text: '看中文、听英文，连续拼写2个已经学过的单词' },
+    falling: { icon: '🪂', name: '单词落体', text: '看下落的英文，在三个中文释义中选出正确答案' }
+  }[game.mode];
   return shell(`<main class="mission-intro ${game.mission.type}">
     <div class="mission-icon">${game.mission.icon}</div>
     <p>第 ${game.level} 关 · ${game.grade}年级</p>
     <h1>${game.mission.name}</h1>
-    <div class="mode-card"><b>${game.mode === 'match3' ? '💥 三消战斗' : '🔗 中英配对'}</b><span>${modeText}</span></div>
+    <div class="mode-card"><b>${modeDetails.icon} ${modeDetails.name}</b><span>${modeDetails.text}</span></div>
     <small>${game.mission.bonus}</small>
     ${spiritFigure('intro-spirit')}
     <button class="primary" data-action="enter-level">准备好了，出发！</button>
@@ -1201,6 +1568,8 @@ function gameView() {
   const game = state.game;
   const p = normalizedProgress();
   if (!game) return homeView();
+  if (game.mode === 'spelling') return shell(spellingView(game), 'game');
+  if (game.mode === 'falling') return shell(fallingView(game), 'game');
   return shell(`<main class="game-page">
     <div class="game-head"><button data-action="leave-game">‹</button><div><b>第 ${game.level} 关 · ${game.grade}年级</b><span>${game.mode === 'match3' ? `${game.score}/${game.scoreGoal} 目标积分` : `${game.done}/${game.goal} 个配对`}</span></div><div><b>${game.moves}</b><span>剩余步数</span></div></div>
     <div class="goal-progress"><i style="width:${Math.min(100, game.mode === 'match3' ? game.score / game.scoreGoal * 100 : game.done / game.goal * 100)}%"></i></div>
@@ -1227,7 +1596,7 @@ function resultView() {
   const pet = p.pet.speciesId ? PetSystem.petById(p.pet.speciesId) : SPIRITS[0];
   return shell(`<main class="result-page ${r.win ? 'win' : 'lose'}">
     ${spiritFigure('result-spirit', pet, p.pet.level)}
-    <p>${r.win ? '关卡完成' : '步数用完啦'}</p>
+    <p>${r.win ? '关卡完成' : r.mode === 'falling' ? '这次没有及时选对' : r.mode === 'spelling' ? '这个单词还需要再练习' : '步数用完啦'}</p>
     <h1>${r.win ? ['漂亮！全部消掉啦！', '这关也被你拿下了！', `${esc(p.pet.name || pet.name)}正在为你鼓掌！`][r.level % 3] : '差一点就成功了'}</h1>
     ${r.petQuote ? `<div class="pet-speech-bubble result-pet-speech"><b>${esc(p.pet.name || pet.name)}说</b><p>${esc(r.petQuote)}</p></div>` : ''}
     ${r.win ? `<div class="stars">${'★'.repeat(r.stars)}${'☆'.repeat(3 - r.stars)}</div>${r.mission?.type !== 'normal' ? `<div class="mission-reward">${r.mission.icon} ${r.mission.name}奖励已开启</div>` : ''}<div class="reward-row"><span>经验 +${r.xp}</span><span>金币 +${r.coins}</span></div>${r.saved === false ? '<small class="save-warning">网络恢复后请重新完成本关，奖励才会存入账号。</small>' : ''}` : ''}
@@ -1331,10 +1700,20 @@ async function openLeaderboard() {
   } catch (error) { toast(error.message); }
   render();
 }
-function startLevel(level) {
+async function startLevel(level) {
   cancelSpeech();
-  state.game = newGame(Math.max(1, Math.min(100, level)));
-  state.game.tutorial = tutorialForGame(state.game, normalizedProgress());
+  clearFallingTimer();
+  const safeLevel = Math.max(1, Math.min(100, level));
+  let assignment = { mode: modeForLevel(safeLevel), words: [] };
+  try {
+    const data = await api('/api/review/assign', { method: 'POST', body: JSON.stringify({ level: safeLevel }) });
+    state.user = data.user;
+    assignment = data;
+  } catch {}
+  if (assignment.mode === 'spelling' && assignment.words?.length >= 2) state.game = newSpellingGame(safeLevel, assignment.words);
+  else if (assignment.mode === 'falling' && assignment.words?.length >= 5) state.game = newFallingGame(safeLevel, assignment.words, !normalizedProgress().review.fallingTutorialDone);
+  else state.game = newGame(safeLevel);
+  if (['match3', 'pair'].includes(state.game.mode)) state.game.tutorial = tutorialForGame(state.game, normalizedProgress());
   state.result = null;
   state.view = 'intro';
   render();
@@ -1419,6 +1798,10 @@ async function loadUser() {
 }
 
 document.addEventListener('pointerdown', () => startMusic());
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) pauseFallingTimer();
+  else resumeFallingTimer();
+});
 document.addEventListener('click', async event => {
   const speakButton = event.target.closest('[data-speak-word]');
   if (speakButton) return speakWord(speakButton.dataset.speakWord);
@@ -1426,6 +1809,10 @@ document.addEventListener('click', async event => {
   if (cell) return selectCell(Number(cell.dataset.cell));
   const pair = event.target.closest('[data-pair]');
   if (pair) return selectPair(Number(pair.dataset.pair));
+  const spellingLetter = event.target.closest('[data-spelling-letter]');
+  if (spellingLetter) return chooseSpellingLetter(Number(spellingLetter.dataset.spellingLetter));
+  const fallingChoice = event.target.closest('[data-falling-choice]');
+  if (fallingChoice) return chooseFallingMeaning(Number(fallingChoice.dataset.fallingChoice));
   const level = event.target.closest('[data-level]');
   if (level) return startLevel(Number(level.dataset.level));
   const shopButton = event.target.closest('[data-shop-item]');
@@ -1451,13 +1838,14 @@ document.addEventListener('click', async event => {
   }
   if (action === 'forgot-password') { state.auth.error = ''; state.auth.success = ''; state.view = 'reset-password'; render(); }
   if (action === 'back-login') { state.auth.error = ''; state.auth.success = ''; state.view = 'login'; render(); }
-  if (action === 'home' || action === 'leave-game') { state.view = 'home'; state.game = null; render(); }
+  if (action === 'home' || action === 'leave-game') { clearFallingTimer(); state.view = 'home'; state.game = null; render(); }
   if (action === 'play') startLevel(Math.min(100, normalizedProgress().stage));
   if (action === 'levels') { state.view = 'levels'; render(); }
   if (action === 'enter-level') {
     state.view = 'game';
     state.lastPetQuote = petSpeech('start');
     render();
+    if (state.game?.mode === 'falling') startFallingQuestion();
   }
   if (action === 'pet-store') { state.view = normalizedProgress().pet.speciesId ? 'pet-home' : 'pet-store'; render(); }
   if (action === 'pet-home') { state.view = normalizedProgress().pet.speciesId ? 'pet-home' : 'pet-store'; render(); }
@@ -1484,6 +1872,9 @@ document.addEventListener('click', async event => {
   if (action === 'hint') useHint();
   if (action === 'shuffle') shuffleGame();
   if (action === 'add-moves') addMoves();
+  if (action === 'undo-spelling') undoSpellingLetter();
+  if (action === 'clear-spelling') clearSpellingLetters();
+  if (action === 'submit-spelling') submitSpellingAnswer();
   if (action === 'retry') startLevel(state.result.level);
   if (action === 'next-level') {
     if (state.result.level >= 100) { state.view = 'home'; render(); }
@@ -1492,6 +1883,7 @@ document.addEventListener('click', async event => {
   if (action === 'logout') {
     try { await api('/api/logout', { method: 'POST' }); } catch {}
     cancelSpeech();
+    clearFallingTimer();
     stopMusic(true);
     state.token = null;
     state.user = null;
