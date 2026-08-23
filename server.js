@@ -2,8 +2,10 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const vm = require('vm');
 const { SessionStore, isLoopbackAddress } = require('./session-store');
 const PetSystem = require('./pet-system');
+const ReviewGames = require('./review-games');
 
 const APP_ID = 'word-spirit-planet';
 const APP_VERSION = '0.3.0';
@@ -12,6 +14,21 @@ const ROOT = __dirname;
 const DATA_DIR = process.env.WORD_SPIRIT_DATA_DIR || path.join(ROOT, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'users.json');
 const sessionStore = new SessionStore(path.join(DATA_DIR, 'sessions.json'));
+
+function buildTextbookCatalog() {
+  const sandbox = { window: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(ROOT, 'curriculum.js'), 'utf8'), sandbox, { filename: 'curriculum.js' });
+  vm.runInNewContext(fs.readFileSync(path.join(ROOT, 'textbook-words.generated.js'), 'utf8'), sandbox, { filename: 'textbook-words.generated.js' });
+  const content = sandbox.window.GAME_CONTENT || {};
+  const records = [
+    ...(content.starter || []),
+    ...Object.values(content.gradedMain || {}).flat(),
+    ...(content.grade4Book?.units || []).flatMap(unit => unit.words || []).map(([word, zh]) => ({ word, zh })),
+    ...Object.values(sandbox.window.TEXTBOOK_WORDS?.grades || {}).flat()
+  ];
+  return new Map(records.filter(item => item?.word && item?.zh).map(item => [String(item.word).trim().toLowerCase(), String(item.zh).trim()]));
+}
+const TEXTBOOK_CATALOG = buildTextbookCatalog();
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [] }, null, 2));
@@ -45,6 +62,10 @@ function normalizeProgress(progress = {}) {
   const spirits = progress.spirits && typeof progress.spirits === 'object' && !Array.isArray(progress.spirits)
     ? progress.spirits : { lingling: 1 };
   spirits.lingling = Math.max(1, Number(spirits.lingling || 1));
+  const learnedSeed = (Array.isArray(progress.learnedWords) && progress.learnedWords.length ? progress.learnedWords : progress.collected || [])
+    .map(item => typeof item === 'string'
+      ? { word: item, zh: TEXTBOOK_CATALOG.get(String(item).trim().toLowerCase()) || '' }
+      : { ...item, zh: item?.zh || TEXTBOOK_CATALOG.get(String(item?.word || '').trim().toLowerCase()) || '' });
   return {
     stage: clamp(progress.stage, 1, 100, 1),
     coins: clamp(progress.coins, 0, 999999, 20),
@@ -68,6 +89,8 @@ function normalizeProgress(progress = {}) {
       match3: Boolean(progress.tutorials?.match3),
       pair: Boolean(progress.tutorials?.pair)
     },
+    learnedWords: ReviewGames.normalizeLearnedWords(learnedSeed),
+    review: ReviewGames.normalizeReview(progress.review),
     pet: PetSystem.normalizePetState(progress.pet),
     migrationVersion: clamp(progress.migrationVersion, 0, 1, 0),
     processedOperations: safeStringList(progress.processedOperations, 100, 100),
@@ -242,6 +265,40 @@ const server = http.createServer(async (req, res) => {
       });
       saveDb(db); return send(res, 200, { user: publicUser(target) });
     }
+    if (req.method === 'POST' && url.pathname === '/api/learned-word') {
+      const context = targetContext(req); if (!context) return send(res, 401, { error: '请先登录' });
+      const body = await getBody(req);
+      const word = String(body.word || '').trim().toLowerCase();
+      const zh = TEXTBOOK_CATALOG.get(word);
+      if (!zh) return send(res, 400, { error: '这个单词不在当前教材词库中' });
+      const result = ['correct', 'wrong', 'review'].includes(body.result) ? body.result : 'correct';
+      context.progress.learnedWords = ReviewGames.recordLearnedWord(context.progress.learnedWords, word, zh, result);
+      if (!context.progress.collected.includes(word)) context.progress.collected.push(word);
+      context.target.progress = context.progress;
+      saveDb(context.db);
+      return send(res, 200, { user: publicUser(context.target), learnedWord: context.progress.learnedWords.find(item => item.word === word) });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/review/assign') {
+      const context = targetContext(req); if (!context) return send(res, 401, { error: '请先登录' });
+      const body = await getBody(req);
+      const level = clamp(body.level, 1, 100, context.progress.stage);
+      const baseMode = [1, 2].includes(level % 4) ? 'match3' : 'pair';
+      const assignment = ReviewGames.assignReviewMode(context.progress, level, baseMode);
+      context.progress.review = assignment.review;
+      context.target.progress = context.progress;
+      saveDb(context.db);
+      const words = ReviewGames.REVIEW_MODES.includes(assignment.mode)
+        ? ReviewGames.selectReviewWords(context.progress.learnedWords, assignment.mode === 'spelling' ? 2 : 5)
+        : [];
+      return send(res, 200, { user: publicUser(context.target), mode: assignment.mode, words });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/review/tutorial-complete') {
+      const context = targetContext(req); if (!context) return send(res, 401, { error: '请先登录' });
+      context.progress.review.fallingTutorialDone = true;
+      context.target.progress = context.progress;
+      saveDb(context.db);
+      return send(res, 200, { user: publicUser(context.target) });
+    }
     if (req.method === 'POST' && url.pathname === '/api/pet/adopt') {
       const context = targetContext(req); if (!context) return send(res, 401, { error: '请先登录' });
       const body = await getBody(req);
@@ -375,6 +432,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/textbook-words.generated.js') return serveFile(res, path.join(ROOT, 'textbook-words.generated.js'));
     if (req.method === 'GET' && url.pathname === '/curriculum.js') return serveFile(res, path.join(ROOT, 'curriculum.js'));
     if (req.method === 'GET' && url.pathname === '/pet-system.js') return serveFile(res, path.join(ROOT, 'pet-system.js'));
+    if (req.method === 'GET' && url.pathname === '/review-games.js') return serveFile(res, path.join(ROOT, 'review-games.js'));
     if (req.method === 'GET' && url.pathname === '/styles.css') return serveFile(res, path.join(ROOT, 'styles.css'));
     if (req.method === 'GET' && url.pathname === '/assets/snake-countdown-bgm.mp3') return serveFile(res, path.join(ROOT, 'assets', 'snake-countdown-bgm.mp3'));
     if (req.method === 'GET' && url.pathname === '/assets/word-spirit.png') return serveFile(res, path.join(ROOT, 'assets', 'word-spirit.png'));

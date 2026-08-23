@@ -5,7 +5,7 @@
   "description": "《词灵星球：英语单词消消乐》试玩版",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check pet-system.js && node --check app.js && node --check server.js && node --check session-store.js",
+    "check": "node --check pet-system.js && node --check review-games.js && node --check app.js && node --check server.js && node --check session-store.js",
     "test": "node scripts/smoke_game.js && node scripts/auth_flow_test.js && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/launcher_test.ps1"
   }
 }

@@ -57,7 +57,9 @@ vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(root, 'textbook-words.generated.js'), 'utf8'), context, { filename: 'textbook-words.generated.js' });
 vm.runInContext(fs.readFileSync(path.join(root, 'curriculum.js'), 'utf8'), context, { filename: 'curriculum.js' });
 vm.runInContext(fs.readFileSync(path.join(root, 'pet-system.js'), 'utf8'), context, { filename: 'pet-system.js' });
+vm.runInContext(fs.readFileSync(path.join(root, 'review-games.js'), 'utf8'), context, { filename: 'review-games.js' });
 const petSystem = context.PetSystem;
+const review = context.ReviewGames;
 if (Array.from(petSystem.PET_IDS).join(',') !== 'lingling,sprout,bubble,candy,spark,cloud,moon,rainbow') {
   throw new Error('宠物品类目录不完整');
 }
@@ -77,7 +79,25 @@ if (JSON.stringify(Array.from(petSystem.FOODS, item => [item.price, item.growth]
 const firstPetQuote = petSystem.quoteFor('cloud', 'retry', '', () => 0);
 const secondPetQuote = petSystem.quoteFor('cloud', 'retry', firstPetQuote, () => 0);
 if (!firstPetQuote || firstPetQuote === secondPetQuote) throw new Error('宠物语录没有避免连续重复');
+if (review.SPECIAL_RATE !== .08 || review.MIN_LEARNED_WORDS !== 12) throw new Error('特殊复习关频率或最低词数不正确');
+if ([1, 2, 3, 4, 5].map(review.fallDurationForGrade).join(',') !== '7000,7000,6000,6000,5000') throw new Error('落体关年级时限不正确');
+if ([0, 1, 2].map(review.starsForSpelling).join(',') !== '3,2,1') throw new Error('拼写关星级规则不正确');
+if (review.starsForFalling([.7, .6, .5, .8, .6]) !== 3 || review.starsForFalling([.3, .3, .3, .3, .3]) !== 2 || review.starsForFalling([.1, .1, .1, .1, .1]) !== 1) throw new Error('落体关星级规则不正确');
+const learnedForReview = Array.from({ length: 12 }, (_, index) => ({ word: `word${index}`, zh: `释义${index}`, encounters: 1, wrongCount: index % 2, reviewCount: 0, lastReviewedAt: '' }));
+const baseReviewProgress = { learnedWords: learnedForReview, review: { assignments: {}, lastSpecialLevel: 0, counts: { spelling: 0, falling: 2 }, fallingTutorialDone: false } };
+const assigned = review.assignReviewMode(baseReviewProgress, 8, 'match3', () => .01);
+if (assigned.mode !== 'spelling' || assigned.review.assignments['8'] !== 'spelling') throw new Error('特殊关没有优先选择历史次数较少的类型');
+const persisted = review.assignReviewMode({ ...baseReviewProgress, review: assigned.review }, 8, 'pair', () => .99);
+if (persisted.mode !== 'spelling') throw new Error('同一关的特殊模式没有持久复用');
+const ordinary = review.assignReviewMode(baseReviewProgress, 9, 'pair', () => .08);
+if (ordinary.mode !== 'pair') throw new Error('随机值达到8%边界时仍触发特殊关');
+const noConsecutive = review.assignReviewMode({ ...baseReviewProgress, review: { ...baseReviewProgress.review, lastSpecialLevel: 9 } }, 10, 'match3', () => 0);
+if (noConsecutive.mode !== 'match3') throw new Error('特殊关发生了连续插入');
+const recorded = review.recordLearnedWord([], 'Apple', '苹果', 'correct', '2026-08-24T00:00:00.000Z');
+if (recorded.length !== 1 || recorded[0].word !== 'apple' || recorded[0].encounters !== 1) throw new Error('已学词记录没有正确规范化');
+if (review.selectReviewWords(learnedForReview, 5, () => .5).length !== 5) throw new Error('特殊关选题数量不正确');
 const indexSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+if (!indexSource.includes('/review-games.js?v=1')) throw new Error('首页没有在 app.js 前加载复习关规则');
 if (!indexSource.includes('/pet-system.js?v=1')) throw new Error('首页没有在 app.js 前加载宠物规则');
 const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 if (!serverSource.includes("url.pathname === '/pet-system.js'")) throw new Error('本地服务没有提供宠物规则脚本');

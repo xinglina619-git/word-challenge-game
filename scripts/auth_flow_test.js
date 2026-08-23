@@ -102,6 +102,9 @@ async function stopServer(child) {
     assert.strictEqual(backgroundMusic.status, 200, '背景音乐资源必须可通过静态服务访问');
     assert(backgroundMusic.raw.length > 0, '背景音乐响应不能为空');
     assert(/^audio\/(?:mpeg|mp3)(?:;|$)/i.test(String(backgroundMusic.headers['content-type'] || '')), '背景音乐必须返回音频 Content-Type');
+    const reviewRulesAsset = await request('GET', '/review-games.js');
+    assert.strictEqual(reviewRulesAsset.status, 200, '复习关规则必须可通过静态服务访问');
+    assert(reviewRulesAsset.raw.includes('SPECIAL_RATE'), '复习关规则脚本响应不完整');
 
     const sessionsBefore = JSON.parse(fs.readFileSync(sessionFile, 'utf8')).sessions.length;
     const registered = await request('POST', '/api/register', account);
@@ -127,6 +130,24 @@ async function stopServer(child) {
     assert.strictEqual(loggedIn.body.user.progress.coins, 30);
     assert.strictEqual(loggedIn.body.user.progress.tickets, 0);
     assert.strictEqual(loggedIn.body.user.progress.migrationVersion, 1);
+
+    assert.strictEqual((await request('POST', '/api/learned-word', { word: 'not-in-textbook', result: 'correct' }, originalToken)).status, 400);
+    const learnedWords = ['apple', 'cat', 'bag', 'red', 'dog', 'book', 'pen', 'blue', 'hello', 'please', 'father', 'mother'];
+    let learnedResponse;
+    for (const word of learnedWords) learnedResponse = await request('POST', '/api/learned-word', { word, result: 'correct' }, originalToken);
+    assert.strictEqual(learnedResponse.status, 200);
+    assert.strictEqual(learnedResponse.body.user.progress.learnedWords.length, 12);
+    const learnedAgain = await request('POST', '/api/learned-word', { word: 'apple', result: 'wrong' }, originalToken);
+    assert.strictEqual(learnedAgain.body.learnedWord.encounters, 2);
+    assert.strictEqual(learnedAgain.body.learnedWord.wrongCount, 1);
+    const firstAssignment = await request('POST', '/api/review/assign', { level: 8 }, originalToken);
+    const repeatedAssignment = await request('POST', '/api/review/assign', { level: 8 }, originalToken);
+    assert.strictEqual(firstAssignment.status, 200);
+    assert(['match3', 'pair', 'spelling', 'falling'].includes(firstAssignment.body.mode));
+    assert.strictEqual(repeatedAssignment.body.mode, firstAssignment.body.mode, '同一关必须复用已保存的模式分配');
+    const tutorialComplete = await request('POST', '/api/review/tutorial-complete', {}, originalToken);
+    assert.strictEqual(tutorialComplete.status, 200);
+    assert.strictEqual(tutorialComplete.body.user.progress.review.fallingTutorialDone, true);
 
     assert.strictEqual((await request('POST', '/api/pet/adopt', { speciesId: 'invalid', name: '坏坏' }, originalToken)).status, 400);
     const adopted = await request('POST', '/api/pet/adopt', { speciesId: 'cloud', name: '团团' }, originalToken);
@@ -214,7 +235,7 @@ async function stopServer(child) {
     })).status, 200);
     assert.strictEqual((await request('POST', '/api/logout', null, changed.body.token)).status, 200);
     assert.strictEqual((await request('GET', '/api/me', null, changed.body.token)).status, 401);
-    console.log('AUTH_FLOW=PASS register=PASS login=PASS restart=PASS reset=PASS logout=PASS health=PASS pet=PASS shop=PASS feed=PASS migration=PASS idempotency=PASS');
+    console.log('AUTH_FLOW=PASS register=PASS login=PASS restart=PASS reset=PASS logout=PASS health=PASS pet=PASS shop=PASS feed=PASS migration=PASS idempotency=PASS learned=PASS review-assignment=PASS');
   } finally {
     await stopServer(child);
     fs.rmSync(tempDir, { recursive: true, force: true });
