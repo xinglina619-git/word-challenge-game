@@ -124,6 +124,14 @@ if (!serverSource.includes("url.pathname === '/review-games.js'")) throw new Err
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 if (!packageJson.scripts.check.includes('node --check pet-system.js')) throw new Error('语法检查没有覆盖宠物规则脚本');
 if (!packageJson.scripts.check.includes('node --check review-games.js')) throw new Error('语法检查没有覆盖复习关规则脚本');
+for (const asset of [
+  'poodle-poses.png', 'husky-poses.png', 'tibetan-mastiff-poses.png',
+  'golden-retriever-poses.png', 'corgi-poses.png', 'shiba-inu-poses.png'
+]) {
+  const assetPath = path.join(root, 'assets', 'dogs', asset);
+  if (!fs.existsSync(assetPath)) throw new Error(`小狗素材缺失：${asset}`);
+  if (fs.statSync(assetPath).size < 20_000) throw new Error(`小狗素材文件异常：${asset}`);
+}
 const stylesSource = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
 const source = `${fs.readFileSync(path.join(root, 'app.js'), 'utf8')}
 globalThis.__gameTest = {
