@@ -3,6 +3,16 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+function pngMetadata(assetPath) {
+  const png = fs.readFileSync(assetPath);
+  if (png.length < 29 || !png.subarray(0, 8).equals(PNG_SIGNATURE) || png.subarray(12, 16).toString('ascii') !== 'IHDR') {
+    return null;
+  }
+  return { width: png.readUInt32BE(16), height: png.readUInt32BE(20), colorType: png[25] };
+}
+
 let focusedSelector = '';
 let systemVoicesForTest = [];
 let speechCancelCount = 0;
@@ -131,6 +141,10 @@ for (const asset of [
   const assetPath = path.join(root, 'assets', 'dogs', asset);
   if (!fs.existsSync(assetPath)) throw new Error(`小狗素材缺失：${asset}`);
   if (fs.statSync(assetPath).size < 20_000) throw new Error(`小狗素材文件异常：${asset}`);
+  const metadata = pngMetadata(assetPath);
+  if (!metadata) throw new Error(`小狗素材 PNG 格式异常：${asset}`);
+  if (metadata.width !== 1024 || metadata.height !== 1024) throw new Error(`小狗素材尺寸异常：${asset}`);
+  if (![4, 6].includes(metadata.colorType)) throw new Error(`小狗素材缺少 Alpha 通道：${asset}`);
 }
 const stylesSource = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
 const source = `${fs.readFileSync(path.join(root, 'app.js'), 'utf8')}
