@@ -123,8 +123,12 @@ const state = {
   audio: readAudioSettings(),
   audioPanel: false,
   petBusy: false,
+  petVisitBusy: false,
   selectedPetId: '',
-  lastPetQuote: ''
+  lastPetQuote: '',
+  showTrickBook: false,
+  activeTrickId: '',
+  trickTimer: null
 };
 
 const app = document.querySelector('#app');
@@ -419,6 +423,12 @@ function spiritFigure(className = '', spirit = activeSpirit(), level) {
   const style = spirit.asset ? `--spirit-image:url('${spirit.asset}')` : '';
   return `<span class="spirit-figure ${unique} growth-stage-${growthStage(owned)} ${className}" style="${style}" role="img" aria-label="${spirit.species || spirit.name || '学习伙伴'}"></span>`;
 }
+function dogFigure(className = '', dog, pose = 'stand', trick = null) {
+  if (!dog) return '<span class="dog-figure dog-fallback" role="img" aria-label="小狗">🐾</span>';
+  const safePose = ['stand', 'paw', 'walk', 'sleep'].includes(pose) ? pose : 'stand';
+  const trickClass = trick ? ` trick-${trick.animation} effect-${trick.effect}` : '';
+  return `<span class="dog-figure pose-${safePose}${trickClass} ${className}" style="--dog-sheet:url('${dog.asset}')" role="img" aria-label="${esc(dog.species)}"></span>`;
+}
 function mascotFigure(className = '') {
   return `<span class="spirit-figure unique-spirit ${className}" style="--spirit-image:url('${NEUTRAL_MASCOT.asset}')" role="img" aria-label="${NEUTRAL_MASCOT.species}"></span>`;
 }
@@ -430,6 +440,17 @@ function petSpeech(scene) {
   const quote = PetSystem.quoteFor(pet.speciesId, scene, state.lastPetQuote);
   state.lastPetQuote = quote;
   return quote;
+}
+let petVisitRequestId = 0;
+function resetPetHomeInteraction(cancelVisit = true) {
+  if (state.trickTimer) clearTimeout(state.trickTimer);
+  state.trickTimer = null;
+  state.activeTrickId = '';
+  state.showTrickBook = false;
+  if (cancelVisit) {
+    petVisitRequestId += 1;
+    state.petVisitBusy = false;
+  }
 }
 function petGrowthPercent(pet) {
   if (pet.level >= 10) return 100;
@@ -1605,38 +1626,66 @@ function levelsView() {
 }
 function petStoreView() {
   const p = normalizedProgress();
-  if (p.pet.speciesId) return petHomeView();
-  const selectedId = PetSystem.petById(state.selectedPetId)?.id || SPIRITS[0].id;
+  if (p.pet.speciesId && !p.pet.needsBreedSelection) return petHomeView();
+  const selectedId = PetSystem.petById(state.selectedPetId)?.id || PetSystem.PETS[0].id;
   const selected = PetSystem.petById(selectedId);
   const initialPetName = p.pet.needsBreedSelection ? p.pet.name : '';
   state.selectedPetId = selectedId;
   return shell(`<main class="list-page pet-store-page">
     <div class="page-title"><span>🐾</span><div><p>选择学习伙伴</p><h1>6种小狗，只领取其中一只</h1></div></div>
-    <div class="permanent-choice-note"><b>领取免费，但选择是永久的</b><span>领取后可以随时免费改名，宠物品类不能更换。请先预览，再确认领取。</span></div>
-    <div class="pet-catalog-grid">${SPIRITS.map(spirit => `<button type="button" class="pet-catalog-card ${spirit.id === selectedId ? 'selected' : ''}" data-action="select-pet" data-pet-id="${spirit.id}" aria-pressed="${spirit.id === selectedId}">
-      ${spiritFigure('catalog-spirit', spirit, 1)}<small>${esc(spirit.species)} · ${esc(spirit.personality)}</small><h2>${esc(spirit.species)}</h2><p>期待和你一起学习、成长。</p><b>${spirit.id === selectedId ? '已选中，查看预览' : '选择预览'}</b>
+    ${p.pet.needsBreedSelection
+      ? '<div class="permanent-choice-note migration-note"><b>重新选择不会清空养成数据</b><span>保留原有等级、成长值、金币和食物，只需重新确认一个犬种。</span></div>'
+      : '<div class="permanent-choice-note"><b>领取免费，但选择是永久的</b><span>领取后可以随时免费改名，宠物品类不能更换，也就是犬种不能更换。请先预览，再确认领取。</span></div>'}
+    <div class="pet-catalog-grid">${PetSystem.PETS.map(dog => `<button type="button" class="pet-catalog-card ${dog.id === selectedId ? 'selected' : ''}" data-action="select-pet" data-pet-id="${dog.id}" aria-pressed="${dog.id === selectedId}">
+      ${dogFigure('catalog-dog', dog)}<h2>${esc(dog.species)}</h2><p>${esc(dog.personality)}</p><b>${dog.id === selectedId ? '已选中，查看预览' : '选择预览'}</b>
     </button>`).join('')}</div>
-    <section class="pet-adopt-preview">${spiritFigure('adopt-preview-spirit', selected, 1)}<div><small>${esc(selected.species)} · ${esc(selected.personality)}</small><h2>领取${esc(selected.species)}</h2><p>期待和你一起学习、成长。</p>
-      <form id="pet-adopt-form"><input type="hidden" name="speciesId" value="${selected.id}"><label>给它取名字<input required maxlength="8" name="name" value="${esc(initialPetName)}" pattern="[A-Za-z0-9一-龥]{1,8}" title="1至8个中文、英文或数字"></label><button class="primary" ${state.petBusy ? 'disabled' : ''}>${state.petBusy ? '正在领取…' : '确认领取这只宠物'}</button></form>
+    <section class="pet-adopt-preview">${dogFigure('adopt-preview-dog', selected)}<div><small>${esc(selected.species)} · ${esc(selected.personality)}</small><h2>${p.pet.needsBreedSelection ? '重新选择' : '领取'}${esc(selected.species)}</h2>
+      <form id="pet-adopt-form"><input type="hidden" name="speciesId" value="${selected.id}"><label>给它取名字<input required maxlength="8" name="name" value="${esc(initialPetName)}" pattern="[A-Za-z0-9一-龥]{1,8}" title="1至8个中文、英文或数字"></label><small>${p.pet.needsBreedSelection ? '可以保留旧名字，也可以免费修改' : '必须由你亲自命名，不能留空'}</small><button class="primary" ${state.petBusy ? 'disabled' : ''}>${state.petBusy ? '正在领取…' : p.pet.needsBreedSelection ? '确认重新选择' : '确认领取这只小狗'}</button></form>
     </div></section>
   </main>`, 'pet');
 }
+function petOnboardingCard(progress) {
+  const step = progress.pet.onboardingStep;
+  if (step === 'complete') return '';
+  const currentIndex = { earn: 0, buy: 1, feed: 2 }[step] ?? 0;
+  const labels = ['去闯关赚金币', '去商店兑换食物', '带着食物回宠物屋喂食'];
+  const action = step === 'earn' ? 'play' : step === 'buy' ? 'shop' : 'focus-food';
+  const button = step === 'earn' ? '快去帮你的小狗赚金币吧' : step === 'buy' ? '去兑换一份食物' : '现在喂给小狗';
+  return `<section class="pet-onboarding-card"><b>新手小任务</b><ol>${labels.map((label, index) => `<li class="${index < currentIndex ? 'done' : index === currentIndex ? 'current' : ''}"${index === currentIndex ? ' aria-current="step"' : ''}>${index < currentIndex ? '✓' : index + 1} ${label}</li>`).join('')}</ol><button class="primary" data-action="${action}">${button}</button></section>`;
+}
+function trickBookView(progress) {
+  const pet = progress.pet;
+  const next = PetSystem.nextTrickForLevel(pet.level);
+  return `<section class="trick-book" aria-label="小狗特技成长册"><div class="trick-book-head"><div><small>成长期待</small><h2>小狗特技成长册</h2></div><button data-action="close-tricks" aria-label="关闭特技成长册">×</button></div><div class="trick-grid">${PetSystem.TRICKS.map(trick => {
+    const unlocked = trick.level <= pet.level;
+    const isNext = next?.id === trick.id;
+    return `<article class="trick-card ${unlocked ? 'unlocked' : 'locked'} ${isNext ? 'next' : ''}"><span>${unlocked ? '✨' : '🔒'}</span><b>${trick.name}</b><small>Lv.${trick.level} ${unlocked ? '已解锁' : isNext ? `还差 ${PetSystem.growthRemaining(pet.growth)} 成长值` : '等待解锁'}</small>${unlocked ? `<button data-action="perform-trick" data-trick-id="${trick.id}">表演一下</button>` : ''}</article>`;
+  }).join('')}</div></section>`;
+}
 function petHomeView() {
   const p = normalizedProgress();
-  if (!p.pet.speciesId) return petStoreView();
-  const pet = PetSystem.petById(p.pet.speciesId);
-  const nextTarget = PetSystem.nextGrowthTarget(p.pet.level);
+  if (!p.pet.speciesId || p.pet.needsBreedSelection) return petStoreView();
+  const dog = PetSystem.petById(p.pet.speciesId);
+  const activeTrick = PetSystem.trickById(state.activeTrickId);
+  const pose = activeTrick?.pose || 'stand';
+  const nextTrick = PetSystem.nextTrickForLevel(p.pet.level);
+  const remaining = PetSystem.growthRemaining(p.pet.growth);
   return shell(`<main class="list-page pet-home-page">
     <div class="page-title"><span>🏡</span><div><p>宠物之家</p><h1>${esc(p.pet.name)}今天也在等你</h1></div></div>
     <section class="pet-room-card">
-      <button class="pet-room-figure pet-interact" data-action="pet-tap">${spiritFigure('home-pet-spirit', pet, p.pet.level)}<span>轻轻点我互动</span></button>
-      <div class="pet-room-info"><small>${esc(pet.species)} · ${esc(pet.personality)} · ${growthName(p.pet.level)}</small><h2>${esc(p.pet.name)} · Lv.${p.pet.level}</h2><p>“${esc(pet.slogan)}”</p>
-        <i class="pet-growth-bar"><em style="width:${petGrowthPercent(p.pet)}%"></em></i><b>${p.pet.level >= 10 ? '已达到最高等级' : `${p.pet.growth}/${nextTarget} 成长值`}</b><span>${esc(petTargetMessage(p))}</span>
+      <div class="pet-stage">
+        ${state.lastPetQuote ? `<div class="dog-speech-bubble" role="status"><b>${esc(p.pet.name)}说</b><p>${esc(state.lastPetQuote)}</p></div>` : ''}
+        <button class="pet-room-figure" data-action="pet-tap">${dogFigure('home-dog', dog, pose, activeTrick)}<span>轻轻摸摸我</span></button>
+      </div>
+      <div class="pet-room-info"><small>${esc(dog.species)} · ${esc(dog.personality)} · ${growthName(p.pet.level)}</small><h1>${esc(p.pet.name)} · Lv.${p.pet.level}</h1>
+        <i class="pet-growth-bar"><em style="width:${petGrowthPercent(p.pet)}%"></em></i><b>${p.pet.level >= 10 ? '已达到最高等级' : `还差 ${remaining} 成长值升级`}</b>
+        <button data-action="show-tricks">${p.pet.level >= 10 ? '查看全部特技' : `查看下一级特技：${nextTrick.name}`}</button>
       </div>
     </section>
-    ${state.lastPetQuote ? `<section class="pet-speech-bubble"><b>${esc(p.pet.name)}说</b><p>${esc(state.lastPetQuote)}</p></section>` : ''}
-    <section class="pet-home-section"><h2>喂养背包</h2><p>食物由学习获得的金币兑换。宠物不会饥饿、生病或退级。</p><div class="food-shop-grid">${PetSystem.FOODS.map(food => `<article class="food-card ${food.price >= 100 ? 'premium' : ''}"><div>${food.icon}</div><h3>${food.name}</h3><p>成长值 +${food.growth}</p><small>库存 ${p.pet.foodInventory[food.id]}</small><button data-action="feed-pet" data-food-id="${food.id}" ${state.petBusy || p.pet.level >= 10 || p.pet.foodInventory[food.id] <= 0 ? 'disabled' : ''}>${p.pet.level >= 10 ? '已经满级' : '喂给宠物'}</button></article>`).join('')}</div></section>
-    <section class="pet-home-section pet-rename-card"><h2>免费改名</h2><form id="pet-rename-form"><input required maxlength="8" name="name" value="${esc(p.pet.name)}" pattern="[A-Za-z0-9一-龥]{1,8}" title="1至8个中文、英文或数字"><button ${state.petBusy ? 'disabled' : ''}>保存名字</button></form><small>名字可以随时修改；已经领取的${esc(pet.species)}不会改变。</small></section>
+    ${petOnboardingCard(p)}
+    ${state.showTrickBook ? trickBookView(p) : ''}
+    <section class="pet-home-section"><h2>喂养背包</h2><p>食物由学习获得的金币兑换。宠物不会饥饿、生病或退级。</p><div class="food-shop-grid">${PetSystem.FOODS.map(food => `<article class="food-card ${food.price >= 100 ? 'premium' : ''}"><div>${food.icon}</div><h3>${food.name}</h3><p>成长值 +${food.growth}</p><small>库存 ${p.pet.foodInventory[food.id]}</small>${p.pet.level >= 10 ? '<button data-action="pet-tap">已经满级，摸摸它吧</button>' : `<button data-action="feed-pet" data-food-id="${food.id}" ${state.petBusy || p.pet.foodInventory[food.id] <= 0 ? 'disabled' : ''}>喂给小狗</button>`}</article>`).join('')}</div></section>
+    <section class="pet-home-section pet-rename-card"><h2>免费改名</h2><form id="pet-rename-form"><input required maxlength="8" name="name" value="${esc(p.pet.name)}" pattern="[A-Za-z0-9一-龥]{1,8}" title="1至8个中文、英文或数字"><button ${state.petBusy ? 'disabled' : ''}>保存名字</button></form><small>名字可以随时修改；已经领取的${esc(dog.species)}不会改变。</small></section>
     <button class="primary" data-action="shop">去商店兑换食物</button>
   </main>`, 'pet');
 }
@@ -1695,6 +1744,7 @@ async function openLeaderboard() {
 async function startLevel(level) {
   cancelSpeech();
   clearFallingTimer();
+  resetPetHomeInteraction();
   const safeLevel = Math.max(1, Math.min(100, level));
   let assignment = { mode: modeForLevel(safeLevel), words: [] };
   try {
@@ -1717,18 +1767,49 @@ function operationId(prefix) {
 async function adoptPet(speciesId, name) {
   const pet = PetSystem.petById(speciesId);
   if (!pet || !PetSystem.validPetName(name)) return toast('请选择宠物，并填写1至8个中文、英文或数字作为名字');
-  if (!globalThis.confirm(`确认领取“${pet.species}”并命名为“${name}”吗？领取后不能更换宠物品类。`)) return;
+  if (state.petBusy) return;
+  if (!globalThis.confirm(`确认选择“${pet.species}”并命名为“${name}”吗？选择后犬种不能再次更换，名字仍可免费修改。`)) return;
   state.petBusy = true;
   render();
   try {
     const data = await api('/api/pet/adopt', { method: 'POST', body: JSON.stringify({ speciesId, name }) });
     state.user = data.user;
-    state.lastPetQuote = petSpeech('home');
+    resetPetHomeInteraction();
+    state.lastPetQuote = petSpeech('welcome');
     state.view = 'pet-home';
     soundSpecial('burst', 7);
     toast(`${name}已经成为你的专属学习伙伴！`);
   } catch (error) { toast(error.message); }
   finally { state.petBusy = false; render(); }
+}
+async function openPetHome() {
+  const pet = normalizedProgress().pet;
+  if (!pet.speciesId || pet.needsBreedSelection) {
+    resetPetHomeInteraction();
+    state.view = 'pet-store';
+    render();
+    return;
+  }
+  if (state.petVisitBusy) return;
+  resetPetHomeInteraction();
+  const requestId = ++petVisitRequestId;
+  state.view = 'pet-home';
+  state.lastPetQuote = '';
+  state.petVisitBusy = true;
+  render();
+  try {
+    const data = await api('/api/pet/visit', { method: 'POST', body: '{}' });
+    if (requestId !== petVisitRequestId) return;
+    state.user = data.user;
+    if (data.petVisit?.showHungerPrompt) state.lastPetQuote = petSpeech('hunger');
+  } catch {
+    if (requestId === petVisitRequestId) toast('宠物屋已经打开，今日提醒暂时没有同步');
+  } finally {
+    if (requestId === petVisitRequestId) {
+      state.petVisitBusy = false;
+      render();
+    }
+  }
 }
 async function renamePet(name) {
   if (!PetSystem.validPetName(name)) return toast('宠物名字需为1至8个中文、英文或数字');
@@ -1756,16 +1837,26 @@ async function buyShopItem(itemId) {
 async function feedPet(foodId) {
   const food = PetSystem.foodById(foodId);
   if (!food) return;
+  const currentPet = normalizedProgress().pet;
+  if (currentPet.level >= 10) {
+    state.lastPetQuote = petSpeech('maxLevel');
+    soundPop(3);
+    render();
+    return;
+  }
+  if (state.petBusy) return;
   state.petBusy = true;
   render();
   try {
     const data = await api('/api/pet/feed', { method: 'POST', body: JSON.stringify({ foodId, operationId: operationId('feed') }) });
     state.user = data.user;
-    const leveledUp = data.feeding?.newLevel > data.feeding?.oldLevel;
-    state.lastPetQuote = petSpeech(leveledUp ? 'levelUp' : food.quoteScene);
+    const scene = data.feeding?.unlockedTrickIds?.length ? 'levelUp' : food.quoteScene;
+    const emotion = petSpeech(scene);
+    const goal = PetSystem.feedingGoal(data.feeding);
+    state.lastPetQuote = [emotion, goal].filter(Boolean).join(' ');
     if (food.price >= 100) soundSpecial('burst', 8);
     else soundPop(5);
-    toast(leveledUp ? `${normalizedProgress().pet.name}升级啦！` : `成长值 +${food.growth}`);
+    toast(data.feeding?.newLevel > data.feeding?.oldLevel ? `${normalizedProgress().pet.name}升级啦！` : `成长值 +${food.growth}`);
   } catch (error) { toast(error.message); }
   finally { state.petBusy = false; render(); }
 }
@@ -1814,6 +1905,9 @@ document.addEventListener('click', async event => {
   const action = event.target.closest('[data-action]')?.dataset.action;
   if (!action) return;
   if (state.game && ['home', 'leave-game', 'levels', 'pet-home', 'pet-store', 'shop', 'leaderboard', 'profile'].includes(action)) cancelSpeech();
+  if (state.view === 'pet-home' && ['home', 'leave-game', 'play', 'levels', 'pet-store', 'shop', 'leaderboard', 'profile', 'logout'].includes(action)) {
+    resetPetHomeInteraction();
+  }
   if (action === 'switch-login' || action === 'switch-register') {
     if (state.auth.busy) return;
     state.auth.phone = document.querySelector('#auth-form input[name="phone"]')?.value || state.auth.phone;
@@ -1838,10 +1932,29 @@ document.addEventListener('click', async event => {
     render();
     if (state.game?.mode === 'falling') startFallingQuestion();
   }
-  if (action === 'pet-store') { state.view = normalizedProgress().pet.speciesId ? 'pet-home' : 'pet-store'; render(); }
-  if (action === 'pet-home') { state.view = normalizedProgress().pet.speciesId ? 'pet-home' : 'pet-store'; render(); }
-  if (action === 'select-pet') { state.selectedPetId = event.target.closest('[data-pet-id]')?.dataset.petId || SPIRITS[0].id; render(); }
-  if (action === 'pet-tap') { state.lastPetQuote = petSpeech('tap'); soundPop(3); render(); }
+  if (action === 'pet-store' || action === 'pet-home') return openPetHome();
+  if (action === 'select-pet') { state.selectedPetId = event.target.closest('[data-pet-id]')?.dataset.petId || PetSystem.PETS[0].id; render(); }
+  if (action === 'pet-tap') {
+    state.lastPetQuote = petSpeech(normalizedProgress().pet.level >= 10 ? 'maxLevel' : 'tap');
+    soundPop(3);
+    render();
+  }
+  if (action === 'show-tricks') { state.showTrickBook = true; render(); }
+  if (action === 'close-tricks') { state.showTrickBook = false; render(); }
+  if (action === 'focus-food') document.querySelector('.food-shop-grid')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  if (action === 'perform-trick') {
+    const trick = PetSystem.trickById(event.target.closest('[data-trick-id]')?.dataset.trickId);
+    if (!trick || trick.level > normalizedProgress().pet.level || state.activeTrickId) return;
+    if (state.trickTimer) clearTimeout(state.trickTimer);
+    state.activeTrickId = trick.id;
+    state.lastPetQuote = `看我的${trick.name}！`;
+    render();
+    state.trickTimer = setTimeout(() => {
+      state.activeTrickId = '';
+      state.trickTimer = null;
+      render();
+    }, 1800);
+  }
   if (action === 'mistakes') { state.view = 'mistakes'; render(); }
   if (action === 'shop') { state.view = 'shop'; render(); }
   if (action === 'leaderboard') openLeaderboard();
@@ -1875,6 +1988,7 @@ document.addEventListener('click', async event => {
     try { await api('/api/logout', { method: 'POST' }); } catch {}
     cancelSpeech();
     clearFallingTimer();
+    resetPetHomeInteraction();
     stopMusic(true);
     state.token = null;
     state.user = null;

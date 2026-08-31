@@ -77,10 +77,12 @@ function pngAlphaPixels(metadata) {
 }
 
 let focusedSelector = '';
+let scrolledSelector = '';
 let systemVoicesForTest = [];
 let speechCancelCount = 0;
 const spokenLines = [];
 const documentListeners = new Map();
+let fetchHandler = () => Promise.reject(new Error('fetch should not run in smoke test'));
 async function dispatchDocumentEvent(type, event) {
   const listeners = [...(documentListeners.get(type) || [])];
   for (const listener of listeners) {
@@ -103,7 +105,10 @@ const context = {
   document: {
     querySelector: selector => selector === '#app'
       ? appElement
-      : { focus: () => { focusedSelector = selector; } },
+      : {
+          focus: () => { focusedSelector = selector; },
+          scrollIntoView: () => { scrolledSelector = selector; }
+        },
     querySelectorAll: () => [],
     addEventListener: (type, callback, options = {}) => {
       const listeners = documentListeners.get(type) || [];
@@ -123,7 +128,8 @@ const context = {
   clearTimeout,
   setInterval: () => 1,
   clearInterval: () => {},
-  fetch: () => Promise.reject(new Error('fetch should not run in smoke test'))
+  confirm: () => true,
+  fetch: (...args) => fetchHandler(...args)
 };
 context.globalThis = context;
 vm.createContext(context);
@@ -265,6 +271,12 @@ globalThis.__gameTest = {
   homeView: typeof homeView === 'function' ? homeView : null,
   petStoreView: typeof petStoreView === 'function' ? petStoreView : null,
   petHomeView: typeof petHomeView === 'function' ? petHomeView : null,
+  dogFigure: typeof dogFigure === 'function' ? dogFigure : null,
+  petOnboardingCard: typeof petOnboardingCard === 'function' ? petOnboardingCard : null,
+  trickBookView: typeof trickBookView === 'function' ? trickBookView : null,
+  openPetHome: typeof openPetHome === 'function' ? openPetHome : null,
+  adoptPet: typeof adoptPet === 'function' ? adoptPet : null,
+  feedPet: typeof feedPet === 'function' ? feedPet : null,
   shopView: typeof shopView === 'function' ? shopView : null,
   petSpeech: typeof petSpeech === 'function' ? petSpeech : null,
   petTargetMessage: typeof petTargetMessage === 'function' ? petTargetMessage : null,
@@ -434,6 +446,43 @@ if (home.includes('再听') || home.includes('弹出')) throw new Error('首次�
 if (!test.levelIntroView || !test.resultView || !test.petNeedsAttention) throw new Error('页面边界测试接口不完整');
 if (test.petNeedsAttention({ pet: { speciesId: 'corgi', onboardingStep: 'complete', lastFedDate: '2026-08-31' } }, '2026-08-31')) {
   throw new Error('已完成当天照顾的小狗不应显示红点');
+}
+test.gameState.user.progress.pet = petSystem.normalizePetState({});
+const unclaimedStore = test.petStoreView();
+if ((unclaimedStore.match(/class="pet-catalog-card/g) || []).length !== 6) throw new Error('领取页没有展示六种小狗');
+if (!unclaimedStore.includes('value=""') || !unclaimedStore.includes('必须由你亲自命名')) throw new Error('新用户名字输入框不是空白');
+if (!unclaimedStore.includes('贵宾犬') || !unclaimedStore.includes('聪明、亲人') || !unclaimedStore.includes('dog-figure')) {
+  throw new Error('领取卡没有使用犬种资料和小狗姿态');
+}
+
+test.gameState.user.progress.pet = petSystem.normalizePetState({
+  speciesId: 'cloud', name: '小云', adoptedAt: '2026-08-24T00:00:00.000Z', growth: 70,
+  foodInventory: { starBiscuit: 2 }, needsBreedSelection: true
+});
+const migrationStore = test.petStoreView();
+if (!migrationStore.includes('保留原有等级、成长值、金币和食物') || !migrationStore.includes('value="小云"')) {
+  throw new Error('旧用户重选提示或旧名字预填缺失');
+}
+
+test.gameState.user.progress.pet = petSystem.normalizePetState({
+  speciesId: 'corgi', name: '豆豆', adoptedAt: '2026-08-24T00:00:00.000Z', growth: 70,
+  foodInventory: { starBiscuit: 2 }, catalogVersion: 2, onboardingStep: 'feed'
+});
+test.gameState.lastPetQuote = '主人，我的肚子咕咕叫啦。';
+const guidedPetHome = test.petHomeView();
+if (!guidedPetHome.includes('dog-speech-bubble') || !guidedPetHome.includes('主人，我的肚子咕咕叫啦')) throw new Error('头顶气泡缺失');
+if (!guidedPetHome.includes('回宠物屋喂食') || !guidedPetHome.includes('新手小任务')) throw new Error('三步养宠任务缺失');
+if (!guidedPetHome.includes('查看下一级特技') || !guidedPetHome.includes('还差 80 成长值')) throw new Error('升级差值或特技入口缺失');
+if (!test.dogFigure || !test.petOnboardingCard || !test.trickBookView || !test.openPetHome || !test.adoptPet || !test.feedPet) {
+  throw new Error('宠物屋交互测试接口不完整');
+}
+const trickBook = test.trickBookView(test.gameState.user.progress);
+if (!trickBook.includes('摇尾欢迎') || !trickBook.includes('开心蹦跳') || !trickBook.includes('data-action="perform-trick"')) {
+  throw new Error('特技成长册缺少解锁和预告');
+}
+const buyOnboarding = test.petOnboardingCard({ pet: { onboardingStep: 'buy' } });
+if (!buyOnboarding.includes('class="done"') || !buyOnboarding.includes('class="current" aria-current="step"') || !buyOnboarding.includes('data-action="shop"')) {
+  throw new Error('新手任务没有区分已完成与当前步骤');
 }
 test.gameState.view = 'login';
 if (!test.authView().includes('单词消消养宠记') || test.authView().includes('词灵星球')) throw new Error('登录页名称尚未统一');
@@ -743,9 +792,122 @@ async function runAsyncRegressionTests() {
     throw new Error('一次失误后的正确配对没有完成关卡并结算为二星');
   }
 
-  const actionEvent = action => ({
-    target: { closest: selector => selector === '[data-action]' ? { dataset: { action } } : null }
+  const jsonResponse = data => ({ ok: true, json: async () => data });
+  const actionEvent = (action, dataset = {}) => {
+    const actionNode = { dataset: { action, ...dataset } };
+    return {
+      target: {
+        closest: selector => {
+          if (selector === '[data-action]') return actionNode;
+          if (selector === '[data-trick-id]' && dataset.trickId) return actionNode;
+          return null;
+        }
+      }
+    };
+  };
+
+  let petApiCalls = [];
+  test.gameState.user = {
+    profile: { nickname: '小测试员' },
+    progress: { stage: 1, coins: 30, pet: petSystem.normalizePetState({}) }
+  };
+  fetchHandler = async (url, options) => {
+    petApiCalls.push({ url, options });
+    throw new Error('空名字不应发送领取请求');
+  };
+  await test.adoptPet('corgi', '');
+  if (petApiCalls.length !== 0) throw new Error('空名字仍然发送了领取请求');
+
+  let confirmMessage = '';
+  context.confirm = message => { confirmMessage = message; return true; };
+  const adoptedUser = {
+    profile: { nickname: '小测试员' },
+    progress: {
+      stage: 1, coins: 30,
+      pet: petSystem.normalizePetState({
+        speciesId: 'corgi', name: '豆豆', adoptedAt: '2026-08-31T00:00:00.000Z',
+        catalogVersion: 2, onboardingStep: 'earn'
+      })
+    }
+  };
+  fetchHandler = async (url, options) => {
+    petApiCalls.push({ url, options });
+    if (url === '/api/pet/adopt') return jsonResponse({ user: adoptedUser });
+    throw new Error(`非预期请求：${url}`);
+  };
+  await test.adoptPet('corgi', '豆豆');
+  if (petApiCalls.at(-1)?.url !== '/api/pet/adopt' || test.gameState.view !== 'pet-home') throw new Error('领取成功后没有直接进入宠物屋');
+  if (!confirmMessage.includes('名字仍可免费修改') || !petSystem.petById('corgi').quotes.welcome.includes(test.gameState.lastPetQuote)) {
+    throw new Error('领取确认或欢迎气泡不正确');
+  }
+
+  let visitCount = 0;
+  fetchHandler = async url => {
+    if (url !== '/api/pet/visit') throw new Error(`非预期请求：${url}`);
+    visitCount += 1;
+    return jsonResponse({ user: adoptedUser, petVisit: { showHungerPrompt: visitCount === 1 } });
+  };
+  await test.openPetHome();
+  if (visitCount !== 1 || !petSystem.petById('corgi').quotes.hunger.includes(test.gameState.lastPetQuote)) {
+    throw new Error('首次进入宠物屋没有显示每日饥饿气泡');
+  }
+  await test.openPetHome();
+  if (visitCount !== 2 || test.gameState.lastPetQuote) throw new Error('同日再次进入宠物屋仍重复显示饥饿气泡');
+
+  const fedUser = {
+    ...adoptedUser,
+    progress: {
+      ...adoptedUser.progress,
+      pet: petSystem.normalizePetState({
+        speciesId: 'corgi', name: '豆豆', adoptedAt: '2026-08-31T00:00:00.000Z', growth: 160,
+        foodInventory: { starBiscuit: 0 }, catalogVersion: 2, onboardingStep: 'complete', lastFedDate: '2026-08-31'
+      })
+    }
+  };
+  fetchHandler = async url => {
+    if (url !== '/api/pet/feed') throw new Error(`非预期请求：${url}`);
+    return jsonResponse({
+      user: fedUser,
+      feeding: { oldLevel: 2, newLevel: 3, growthRemaining: 120, unlockedTrickIds: ['happyBounce'] }
+    });
+  };
+  await test.feedPet('starBiscuit');
+  if (!test.gameState.lastPetQuote.includes('我升到 Lv.3 啦，已经学会开心蹦跳')) {
+    throw new Error('喂食反馈没有包含升级差值或当次解锁特技');
+  }
+  if (test.petHomeView().includes('新手小任务')) throw new Error('首次成功喂食后新手任务没有收起');
+
+  test.gameState.user.progress.pet = petSystem.normalizePetState({
+    speciesId: 'corgi', name: '豆豆', adoptedAt: '2026-08-31T00:00:00.000Z', growth: 2400,
+    foodInventory: { starBiscuit: 2 }, catalogVersion: 2, onboardingStep: 'complete'
   });
+  const maxLevelHome = test.petHomeView();
+  if (!maxLevelHome.includes('data-action="pet-tap"') || !maxLevelHome.includes('已经满级，摸摸它吧') || maxLevelHome.includes('data-food-id=')) {
+    throw new Error('满级食物按钮仍可触发喂食请求');
+  }
+  let maxLevelFeedRequests = 0;
+  fetchHandler = async () => { maxLevelFeedRequests += 1; throw new Error('满级不应请求喂食'); };
+  await test.feedPet('starBiscuit');
+  if (maxLevelFeedRequests !== 0 || !petSystem.petById('corgi').quotes.maxLevel.includes(test.gameState.lastPetQuote)) {
+    throw new Error('满级喂食入口仍扣食物或没有改为摸摸感谢');
+  }
+  test.gameState.lastPetQuote = '';
+  await dispatchDocumentEvent('click', actionEvent('pet-tap'));
+  if (maxLevelFeedRequests !== 0 || !petSystem.petById('corgi').quotes.maxLevel.includes(test.gameState.lastPetQuote)) {
+    throw new Error('点击满级小狗或满级按钮没有显示摸摸感谢');
+  }
+
+  test.gameState.user = fedUser;
+  await dispatchDocumentEvent('click', actionEvent('show-tricks'));
+  if (!test.gameState.showTrickBook || !appElement.innerHTML.includes('小狗特技成长册')) throw new Error('成长册没有通过交互展开');
+  await dispatchDocumentEvent('click', actionEvent('perform-trick', { trickId: 'tailWelcome' }));
+  if (test.gameState.activeTrickId !== 'tailWelcome' || !test.gameState.lastPetQuote.includes('摇尾欢迎')) throw new Error('已解锁特技没有开始表演');
+  scrolledSelector = '';
+  await dispatchDocumentEvent('click', actionEvent('focus-food'));
+  if (scrolledSelector !== '.food-shop-grid') throw new Error('喂食引导没有滚动到食物区域');
+  await dispatchDocumentEvent('click', actionEvent('home'));
+  if (test.gameState.activeTrickId || test.gameState.trickTimer || test.gameState.showTrickBook) throw new Error('离开宠物屋没有清理特技临时状态');
+
   if (!test.startMusic || !test.stopMusic || !test.toggleAudioChannel) throw new Error('背景音乐控制接口缺失');
   let musicPlayAttempts = 0;
   let rejectNextMusicPlay = true;
