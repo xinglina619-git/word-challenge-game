@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const zlib = require('zlib');
 
 const root = path.resolve(__dirname, '..');
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -10,7 +11,69 @@ function pngMetadata(assetPath) {
   if (png.length < 29 || !png.subarray(0, 8).equals(PNG_SIGNATURE) || png.subarray(12, 16).toString('ascii') !== 'IHDR') {
     return null;
   }
-  return { width: png.readUInt32BE(16), height: png.readUInt32BE(20), colorType: png[25] };
+  return {
+    png,
+    width: png.readUInt32BE(16),
+    height: png.readUInt32BE(20),
+    bitDepth: png[24],
+    colorType: png[25],
+    compression: png[26],
+    filter: png[27],
+    interlace: png[28]
+  };
+}
+
+function paeth(a, b, c) {
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+}
+
+function pngAlphaPixels(metadata) {
+  const idat = [];
+  for (let offset = 8; offset + 12 <= metadata.png.length;) {
+    const length = metadata.png.readUInt32BE(offset);
+    const dataStart = offset + 8;
+    const next = dataStart + length + 4;
+    if (next > metadata.png.length) throw new Error('PNG 数据块长度异常');
+    const type = metadata.png.subarray(offset + 4, dataStart).toString('ascii');
+    if (type === 'IDAT') idat.push(metadata.png.subarray(dataStart, dataStart + length));
+    if (type === 'IEND') break;
+    offset = next;
+  }
+  const bytesPerPixel = metadata.colorType === 6 ? 4 : 2;
+  const rowLength = metadata.width * bytesPerPixel;
+  const inflated = zlib.inflateSync(Buffer.concat(idat));
+  if (inflated.length !== metadata.height * (rowLength + 1)) throw new Error('PNG 扫描线长度异常');
+
+  let transparent = false;
+  let visible = false;
+  let previous = Buffer.alloc(rowLength);
+  let offset = 0;
+  const alphaOffset = bytesPerPixel - 1;
+  for (let rowIndex = 0; rowIndex < metadata.height; rowIndex += 1) {
+    const filterType = inflated[offset++];
+    const row = Buffer.from(inflated.subarray(offset, offset + rowLength));
+    offset += rowLength;
+    for (let column = 0; column < rowLength; column += 1) {
+      const left = column >= bytesPerPixel ? row[column - bytesPerPixel] : 0;
+      const up = previous[column];
+      const upLeft = column >= bytesPerPixel ? previous[column - bytesPerPixel] : 0;
+      if (filterType === 1) row[column] = (row[column] + left) & 255;
+      else if (filterType === 2) row[column] = (row[column] + up) & 255;
+      else if (filterType === 3) row[column] = (row[column] + Math.floor((left + up) / 2)) & 255;
+      else if (filterType === 4) row[column] = (row[column] + paeth(left, up, upLeft)) & 255;
+      else if (filterType !== 0) throw new Error('PNG 过滤器异常');
+    }
+    for (let pixel = alphaOffset; pixel < rowLength; pixel += bytesPerPixel) {
+      if (row[pixel] < 255) transparent = true;
+      if (row[pixel] > 0) visible = true;
+    }
+    previous = row;
+  }
+  return { transparent, visible };
 }
 
 let focusedSelector = '';
@@ -145,6 +208,10 @@ for (const asset of [
   if (!metadata) throw new Error(`小狗素材 PNG 格式异常：${asset}`);
   if (metadata.width !== 1024 || metadata.height !== 1024) throw new Error(`小狗素材尺寸异常：${asset}`);
   if (![4, 6].includes(metadata.colorType)) throw new Error(`小狗素材缺少 Alpha 通道：${asset}`);
+  if (metadata.bitDepth !== 8 || metadata.compression !== 0 || metadata.filter !== 0 || metadata.interlace !== 0) throw new Error(`小狗素材 PNG 参数异常：${asset}`);
+  const alpha = pngAlphaPixels(metadata);
+  if (!alpha.transparent) throw new Error(`小狗素材没有透明像素：${asset}`);
+  if (!alpha.visible) throw new Error(`小狗素材没有可见像素：${asset}`);
 }
 const stylesSource = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
 const source = `${fs.readFileSync(path.join(root, 'app.js'), 'utf8')}
