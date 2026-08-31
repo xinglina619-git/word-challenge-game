@@ -4,6 +4,7 @@ const TITLES = [
 ];
 
 const SPIRITS = PetSystem.PETS;
+const NEUTRAL_MASCOT = Object.freeze({ species: '单词小助手', asset: '/assets/word-spirit.png' });
 
 const BACKGROUND_MUSIC_SRC = '/assets/snake-countdown-bgm.mp3';
 const backgroundMusic = new Audio(BACKGROUND_MUSIC_SRC);
@@ -418,6 +419,9 @@ function spiritFigure(className = '', spirit = activeSpirit(), level) {
   const style = spirit.asset ? `--spirit-image:url('${spirit.asset}')` : '';
   return `<span class="spirit-figure ${unique} growth-stage-${growthStage(owned)} ${className}" style="${style}" role="img" aria-label="${spirit.species || spirit.name || '学习伙伴'}"></span>`;
 }
+function mascotFigure(className = '') {
+  return `<span class="spirit-figure unique-spirit ${className}" style="--spirit-image:url('${NEUTRAL_MASCOT.asset}')" role="img" aria-label="${NEUTRAL_MASCOT.species}"></span>`;
+}
 function spiritById(id) { return SPIRITS.find(item => item.id === id) || SPIRITS[0]; }
 function petSpeech(scene) {
   if (!state.user) return '';
@@ -442,6 +446,17 @@ function petTargetMessage(progress) {
   const nextFood = PetSystem.FOODS[0];
   if (progress.coins < nextFood.price) return `再赚 ${nextFood.price - progress.coins} 金币，就可以买${nextFood.name}啦！`;
   return `还差 ${PetSystem.nextGrowthTarget(pet.level) - pet.growth} 点成长值，${pet.name}就能升级了！`;
+}
+function shanghaiDateForUi(now = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(now);
+}
+function petNeedsAttention(progress, today = shanghaiDateForUi()) {
+  const pet = progress?.pet || {};
+  if (pet.needsBreedSelection) return true;
+  if (!pet.speciesId) return false;
+  return pet.onboardingStep !== 'complete' || pet.lastFedDate !== today;
 }
 
 function gradeBank(grade) {
@@ -659,8 +674,7 @@ function newSpellingGame(level, words, random = Math.random) {
     maxCombo: 0,
     sessionCoins: 0,
     busy: false,
-    message: '听发音、看中文，再按顺序点出英文单词',
-    petQuote: ''
+    message: '听发音、看中文，再按顺序点出英文单词'
   };
 }
 function currentSpellingQuestion(game) { return game?.questions?.[game.questionIndex] || null; }
@@ -720,7 +734,6 @@ function spellingView(game) {
       <div class="spelling-slots" aria-label="当前拼写">${[...question.word.replace(/[^a-z]/gi, '')].map((_, index) => `<span>${esc(answer[index] || '')}</span>`).join('')}</div>
       <div class="spelling-letters">${question.letters.map((item, index) => `<button data-spelling-letter="${index}" aria-label="选择字母 ${item.letter}" ${question.selectedIndices.includes(index) || game.busy ? 'disabled' : ''}>${item.letter.toUpperCase()}</button>`).join('')}</div>
       <p class="game-message">${esc(game.message)}</p>
-      ${game.petQuote ? `<div class="pet-speech-bubble"><p>${esc(game.petQuote)}</p></div>` : ''}
       <div class="spelling-actions"><button data-action="undo-spelling" ${!question.selectedIndices.length || game.busy ? 'disabled' : ''}>撤回一个</button><button data-action="clear-spelling" ${!question.selectedIndices.length || game.busy ? 'disabled' : ''}>重新选择</button><button class="primary" data-action="submit-spelling" ${answer.length !== question.word.replace(/[^a-z]/gi, '').length || game.busy ? 'disabled' : ''}>确认拼写</button></div>
     </section>
   </main>`;
@@ -753,8 +766,7 @@ function newFallingGame(level, words, tutorialActive = false, random = Math.rand
     maxCombo: 0,
     sessionCoins: 0,
     busy: false,
-    message: tutorialActive ? '这是不会失败的练习题：看英文，选择正确中文' : '在单词落到底部前，选出正确中文释义',
-    petQuote: ''
+    message: tutorialActive ? '这是不会失败的练习题：看英文，选择正确中文' : '在单词落到底部前，选出正确中文释义'
   };
 }
 function currentFallingQuestion(game = state.game) {
@@ -795,7 +807,6 @@ function fallingView(game) {
       <div class="fall-guide" aria-hidden="true">↓ 在到底前选择 ↓</div>
     </section>
     <p class="game-message">${esc(game.message)}</p>
-    ${game.petQuote ? `<div class="pet-speech-bubble"><p>${esc(game.petQuote)}</p></div>` : ''}
     <div class="falling-choices">${question.choices.map((choice, index) => `<button data-falling-choice="${index}" ${game.busy ? 'disabled' : ''}>${esc(choice)}</button>`).join('')}</div>
   </main>`;
 }
@@ -863,7 +874,6 @@ async function chooseFallingMeaning(index) {
   const outcome = applyFallingChoice(game, index, elapsedMs);
   if (outcome.status === 'tutorial-retry') {
     game.message = `提示：${question.word} 的意思是“${question.zh}”，再选一次吧`;
-    game.petQuote = petSpeech('retry');
     soundWrong();
     game.busy = false;
     render();
@@ -872,7 +882,6 @@ async function chooseFallingMeaning(index) {
   }
   if (outcome.status === 'tutorial-complete') {
     game.message = '练习完成！现在开始正式5题';
-    game.petQuote = petSpeech('start');
     soundPop(4);
     try {
       const data = await api('/api/review/tutorial-complete', { method: 'POST', body: '{}' });
@@ -887,13 +896,11 @@ async function chooseFallingMeaning(index) {
     recordMistake(question);
     syncLearnedWord(question.word, 'wrong').catch(() => {});
     game.message = `正确答案是“${question.zh}”`;
-    game.petQuote = petSpeech('retry');
     soundWrong();
     game.busy = false;
     return finishLevel(false);
   }
   game.message = `${question.word} = ${question.zh}，答对啦！`;
-  game.petQuote = petSpeech('combo');
   soundSpecial('pop', 5 + game.combo);
   try {
     const data = await syncLearnedWord(question.word, 'review');
@@ -915,7 +922,6 @@ function handleFallingTimeout() {
   game.remainingMs = 0;
   if (game.tutorialActive) {
     game.message = `时间到了也没关系：${question.word} 是“${question.zh}”，再练一次`;
-    game.petQuote = petSpeech('retry');
     render();
     scheduleFallingQuestion(850);
     return;
@@ -923,7 +929,6 @@ function handleFallingTimeout() {
   recordMistake(question);
   syncLearnedWord(question.word, 'wrong').catch(() => {});
   game.message = `时间到，正确答案是“${question.zh}”`;
-  game.petQuote = petSpeech('retry');
   soundWrong();
   finishLevel(false);
 }
@@ -1031,7 +1036,6 @@ async function submitSpellingAnswer() {
   const outcome = applySpellingAnswer(game);
   if (outcome.status === 'correct' || outcome.status === 'complete') {
     game.message = `${question.word} 拼写正确！`;
-    game.petQuote = petSpeech('combo');
     soundSpecial('pop', 5 + game.combo);
     try {
       const data = await syncLearnedWord(question.word, 'review');
@@ -1049,7 +1053,6 @@ async function submitSpellingAnswer() {
   recordMistake(question);
   syncLearnedWord(question.word, 'wrong').catch(() => {});
   game.message = `正确拼写是 ${question.word.toUpperCase()}，再认真试一次`;
-  game.petQuote = petSpeech('retry');
   soundWrong();
   speakWord(question.word);
   game.busy = false;
@@ -1286,7 +1289,7 @@ async function finishLevel(win) {
   try { await learnedWordQueue; } catch {}
   if (!win) {
     persistProgress().catch(() => {});
-    state.result = { win: false, level: game.level, mode: game.mode, score: game.score || 0, combo: game.maxCombo || 0, learned: game.learnedTypes?.length ?? game.done ?? 0, petQuote: petSpeech('retry') };
+    state.result = { win: false, level: game.level, mode: game.mode, score: game.score || 0, combo: game.maxCombo || 0, learned: game.learnedTypes?.length ?? game.done ?? 0 };
     state.view = 'result';
     render();
     return;
@@ -1331,8 +1334,7 @@ async function finishLevel(win) {
     coins: reward.coins,
     mission: game.mission,
     missionCoins,
-    saved,
-    petQuote: petSpeech(stars === 3 ? 'star3' : stars === 2 ? 'star2' : 'star1')
+    saved
   };
   state.view = 'result';
   soundCoinBurst();
@@ -1387,14 +1389,14 @@ function shell(content, active = 'home') {
   const p = normalizedProgress();
   return `<div class="app-shell">
     <header class="topbar">
-      <button class="brand" data-action="home">${spiritFigure('brand-spirit')}<span><b>词灵星球</b><small>英语单词消消乐</small></span></button>
-      <div class="top-actions"><button class="audio-settings-button" data-action="audio-settings" aria-label="声音设置">🔊<span>${audioIcon(state.audio)}</span></button>${p.pet.speciesId ? `<span>🐾 Lv.${p.pet.level}</span>` : ''}<span>🪙 ${p.coins}</span><button class="profile" data-action="profile">${esc(state.user.profile.nickname)}</button></div>
+      <button class="brand" data-action="home"><span><b>单词消消养宠记</b><small>闯关赚金币，回家养小狗</small></span></button>
+      <div class="top-actions"><button class="audio-settings-button" data-action="audio-settings" aria-label="声音设置">🔊<span>${audioIcon(state.audio)}</span></button><span>🪙 ${p.coins}</span><button class="profile" data-action="profile">${esc(state.user.profile.nickname)}</button></div>
     </header>
     ${content}
     <nav class="bottom-nav">
-      <button class="${active === 'home' ? 'active' : ''}" data-action="home">🪐<span>星球</span></button>
+      <button class="${active === 'home' ? 'active' : ''}" data-action="home">⌂<span>主页</span></button>
       <button class="${active === 'game' ? 'active' : ''}" data-action="play">◆<span>消消乐</span></button>
-      <button class="${active === 'pet' ? 'active' : ''}" data-action="pet-home">🐾<span>宠物</span></button>
+      <button class="${active === 'pet' ? 'active' : ''}" data-action="pet-home">🐾<span>宠物屋</span></button>
       <button class="${active === 'shop' ? 'active' : ''}" data-action="shop">🛍️<span>商店</span></button>
       <button class="${active === 'rank' ? 'active' : ''}" data-action="leaderboard">♛<span>排行</span></button>
     </nav>${state.audioPanel ? audioSettingsPanel() : ''}
@@ -1404,8 +1406,8 @@ function authView() {
   const login = state.view === 'login';
   const mode = login ? 'login' : 'register';
   return `<main class="auth-page"><section class="auth-card">
-    ${spiritFigure('auth-spirit')}
-    <p>英语单词消消乐</p><h1>词灵星球</h1><small>学习赚金币，陪伴属于你的宠物一起成长。</small>
+    ${mascotFigure('auth-spirit')}
+    <p>英语单词消消乐</p><h1>单词消消养宠记</h1><small>学习赚金币，回宠物屋照顾小狗。</small>
     <div class="auth-tabs" role="tablist"><button class="${login ? 'active' : ''}" data-action="switch-login" type="button" role="tab" aria-selected="${login}" ${state.auth.busy ? 'disabled' : ''}>登录</button><button class="${!login ? 'active' : ''}" data-action="switch-register" type="button" role="tab" aria-selected="${!login}" ${state.auth.busy ? 'disabled' : ''}>注册</button></div>
     <form id="auth-form" aria-busy="${state.auth.busy}">
       <label>家长手机号<input required name="phone" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="请输入11位手机号" value="${esc(state.auth.phone)}"></label>
@@ -1421,7 +1423,7 @@ function authView() {
 
 function authSubmitLabel(mode, busy) {
   if (busy) return mode === 'login' ? '正在登录…' : '正在注册…';
-  return mode === 'login' ? '进入词灵星球' : '创建玩家';
+  return mode === 'login' ? '进入单词消消养宠记' : '创建玩家';
 }
 
 function applyRegistrationSuccess(data) {
@@ -1438,7 +1440,7 @@ function applyRegistrationSuccess(data) {
 }
 function resetPasswordView() {
   return `<main class="auth-page"><section class="auth-card compact-auth">
-    ${spiritFigure('auth-spirit')}
+    ${mascotFigure('auth-spirit')}
     <p>家长帮助</p><h1>重新设置密码</h1><small>为了保护家庭账号，只能在运行游戏的这台电脑上操作。</small>
     <form id="reset-password-form">
       <label>家长手机号<input required name="phone" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="请输入注册手机号"></label>
@@ -1456,31 +1458,24 @@ function homeView() {
   const tip = level === 1 && p.collected.length === 0
     ? '完成有效消除后会自动依次朗读英文和中文，词块随后直接消失。'
     : TIPS[state.tip];
-  if (!p.pet.speciesId) {
-    return shell(`<main class="home-page">
-      <section class="hero pet-welcome-hero"><div><p>免费的学习伙伴</p><h1>${esc(state.user.profile.nickname)}，先领取一只宠物吧！</h1><p>8种宠物都很可爱，每个账号只能选择一只，领取后品类不能更换。</p><button class="play-main" data-action="pet-store">领取我的学习伙伴</button></div>${spiritFigure('hero-spirit', SPIRITS[0], 1)}</section>
-      <section class="home-section learning"><h2>也可以先看看学习内容</h2><div class="learning-grid"><button data-action="play"><span>▶️</span><b>开始第 ${level} 关</b><small>${gradeFor(level)}年级</small></button><button data-action="levels"><span>🗺️</span><b>选择关卡</b><small>1～${level} 关可玩</small></button><button data-action="mistakes"><span>📝</span><b>错词本</b><small>${Object.keys(p.mistakes).length} 个待复习</small></button></div></section>
-    </main>`);
-  }
-  const pet = PetSystem.petById(p.pet.speciesId);
-  const nextTarget = PetSystem.nextGrowthTarget(p.pet.level);
   return shell(`<main class="home-page">
     <section class="hero">
-      <div><p>当前称号 · ${titleFor(level)}</p><h1>${esc(state.user.profile.nickname)}，今天和${esc(p.pet.name)}学几个词？</h1><div class="hero-stats"><span>第 ${level} 关</span><span>${gradeFor(level)}年级</span><span>${esc(pet.species)}</span></div><button class="play-main" data-action="play">开始学习 ▶</button></div>
-      <button class="hero-spirit-wrap pet-interact" data-action="pet-tap">${spiritFigure('hero-spirit', pet, p.pet.level)}<small>${esc(p.pet.name)} · ${growthName(p.pet.level)} · Lv.${p.pet.level}</small></button>
+      <div><p>当前称号 · ${titleFor(level)}</p><h1>${esc(state.user.profile.nickname)}，今天认识几个新单词？</h1><div class="hero-stats"><span>第 ${level} 关</span><span>${gradeFor(level)}年级</span></div><button class="play-main" data-action="play">开始学习 ▶</button></div>
     </section>
-    <section class="level-progress pet-growth-card"><div><b>${esc(p.pet.name)} · Lv.${p.pet.level}</b><span>${p.pet.level >= 10 ? '已经满级' : `${p.pet.growth}/${nextTarget} 成长值`}</span></div><i class="pet-growth-bar"><em style="width:${petGrowthPercent(p.pet)}%"></em></i><small>${esc(petTargetMessage(p))}</small></section>
     <section class="home-section learning"><h2>继续学习</h2><div class="learning-grid">
       <button data-action="play"><span>▶️</span><b>继续第 ${level} 关</b><small>${gradeFor(level)}年级</small></button>
       <button data-action="levels"><span>🗺️</span><b>选择关卡</b><small>1～${level} 关可玩</small></button>
       <button data-action="mistakes"><span>📝</span><b>错词本</b><small>${Object.keys(p.mistakes).length} 个待复习</small></button>
     </div></section>
     <section class="home-section rewards"><h2>成长奖励</h2><div class="reward-grid">
-      <button data-action="pet-home"><span>🐾</span><b>宠物之家</b><small>喂养、互动和改名</small></button>
+      ${p.pet.speciesId ? `<button class="pet-room-entry" data-action="pet-home">
+        <span>🐾${petNeedsAttention(p) ? '<i class="pet-attention-dot" aria-label="小狗需要你的关注"></i>' : ''}</span>
+        <b>宠物屋</b>
+        <small>${p.pet.needsBreedSelection ? '重新选择并保留养成进度' : p.pet.onboardingStep === 'earn' ? '快去帮你的小狗赚金币' : p.pet.onboardingStep === 'buy' ? '去兑换一份小狗食物' : p.pet.onboardingStep === 'feed' ? '带着食物回宠物屋' : p.pet.lastFedDate !== shanghaiDateForUi() ? '今天还没有喂食' : '今天已经照顾好啦'}</small>
+      </button>` : '<button class="pet-room-entry" data-action="pet-home"><span>🐾</span><b>宠物屋</b><small>领取我的小狗</small></button>'}
       <button data-action="shop"><span>🍓</span><b>食物与道具</b><small>拥有 ${p.coins} 金币</small></button>
       <button data-action="levels"><span>⭐</span><b>挑战更多关卡</b><small>学习就能赚金币</small></button>
     </div></section>
-    ${state.lastPetQuote ? `<section class="pet-speech-bubble"><b>${esc(p.pet.name)}说</b><p>${esc(state.lastPetQuote)}</p></section>` : ''}
     <section class="tip-card"><span>💡</span><div><b>学习小提示</b><p>${esc(tip)}</p></div></section>
   </main>`);
 }
@@ -1499,9 +1494,9 @@ function levelIntroView() {
     <h1>${game.mission.name}</h1>
     <div class="mode-card"><b>${modeDetails.icon} ${modeDetails.name}</b><span>${modeDetails.text}</span></div>
     <small>${game.mission.bonus}</small>
-    ${spiritFigure('intro-spirit')}
+    <div class="mission-mascot" aria-hidden="true">🎯</div>
     <button class="primary" data-action="enter-level">准备好了，出发！</button>
-    <button class="ghost" data-action="home">返回星球</button>
+    <button class="ghost" data-action="home">返回主页</button>
   </main>`, 'game');
 }
 function effectLayer(game) {
@@ -1592,17 +1587,13 @@ function gameView() {
 }
 function resultView() {
   const r = state.result;
-  const p = normalizedProgress();
-  const pet = p.pet.speciesId ? PetSystem.petById(p.pet.speciesId) : SPIRITS[0];
   return shell(`<main class="result-page ${r.win ? 'win' : 'lose'}">
-    ${spiritFigure('result-spirit', pet, p.pet.level)}
+    <div class="result-badge" aria-hidden="true">${r.win ? '🏆' : '🌱'}</div>
     <p>${r.win ? '关卡完成' : r.mode === 'falling' ? '这次没有及时选对' : r.mode === 'spelling' ? '这个单词还需要再练习' : '步数用完啦'}</p>
-    <h1>${r.win ? ['漂亮！全部消掉啦！', '这关也被你拿下了！', `${esc(p.pet.name || pet.name)}正在为你鼓掌！`][r.level % 3] : '差一点就成功了'}</h1>
-    ${r.petQuote ? `<div class="pet-speech-bubble result-pet-speech"><b>${esc(p.pet.name || pet.name)}说</b><p>${esc(r.petQuote)}</p></div>` : ''}
+    <h1>${r.win ? ['漂亮！全部消掉啦！', '这关也被你拿下了！', '今天又认识了新单词！'][r.level % 3] : '差一点就成功了'}</h1>
     ${r.win ? `<div class="stars">${'★'.repeat(r.stars)}${'☆'.repeat(3 - r.stars)}</div>${r.mission?.type !== 'normal' ? `<div class="mission-reward">${r.mission.icon} ${r.mission.name}奖励已开启</div>` : ''}<div class="reward-row"><span>经验 +${r.xp}</span><span>金币 +${r.coins}</span></div>${r.saved === false ? '<small class="save-warning">网络恢复后请重新完成本关，奖励才会存入账号。</small>' : ''}` : ''}
     <div class="result-stats"><span>得分 <b>${r.score}</b></span><span>本关认识 <b>${r.learned || 0} 个词</b></span><span>最高连击 <b>${r.combo}</b></span></div>
-    <button class="primary" data-action="${r.win ? 'next-level' : 'retry'}">${r.win ? (r.level >= 100 ? '返回星球' : '下一关') : '重新挑战'}</button>
-    ${p.pet.speciesId ? '<button class="ghost" data-action="pet-home">去看看宠物</button>' : ''}
+    <button class="primary" data-action="${r.win ? 'next-level' : 'retry'}">${r.win ? (r.level >= 100 ? '返回主页' : '下一关') : '重新挑战'}</button>
     <button class="ghost" data-action="home">返回主页</button>
   </main>`, 'game');
 }
@@ -1660,17 +1651,17 @@ function shopView() {
 function mistakesView() {
   const items = Object.entries(normalizedProgress().mistakes);
   return shell(`<main class="list-page"><div class="page-title"><span>📝</span><div><p>错词本</p><h1>${items.length} 个词等待掌握</h1></div></div>
-    ${items.length ? `<div class="mistake-list">${items.map(([word, item]) => `<article><b>${esc(word)}</b><span>累计错 ${item.wrongCount || 1} 次</span><small>连续答对 ${(item.correctStreak || 0)}/2 后移除</small></article>`).join('')}</div>` : `<div class="empty">${spiritFigure('empty-spirit')}<h2>错词本空空的</h2><p>继续保持。</p></div>`}
+    ${items.length ? `<div class="mistake-list">${items.map(([word, item]) => `<article><b>${esc(word)}</b><span>累计错 ${item.wrongCount || 1} 次</span><small>连续答对 ${(item.correctStreak || 0)}/2 后移除</small></article>`).join('')}</div>` : `<div class="empty">${mascotFigure('empty-spirit')}<h2>错词本空空的</h2><p>继续保持。</p></div>`}
   </main>`);
 }
 function leaderboardView() {
   if (!state.leaderboard.length) return shell('<main class="loading">正在加载排行榜…</main>', 'rank');
   return shell(`<main class="list-page"><div class="page-title"><span>🏆</span><div><p>词灵排行榜</p><h1>我的排名：第 ${state.currentRank || '-'} 名</h1></div></div>
-    <div class="rank-list">${state.leaderboard.map(item => `<article class="${item.id === state.user.id ? 'me' : ''}"><b>${item.rank}</b>${spiritFigure('rank-spirit')}<div><strong>${esc(item.nickname)}</strong><small>${titleFor(item.stage)} · 掌握 ${item.words} 词</small></div><span>第 ${item.stage} 关<br>🪙 ${item.coins}</span></article>`).join('')}</div>
+    <div class="rank-list">${state.leaderboard.map(item => `<article class="${item.id === state.user.id ? 'me' : ''}"><b>${item.rank}</b>${mascotFigure('rank-spirit')}<div><strong>${esc(item.nickname)}</strong><small>${titleFor(item.stage)} · 掌握 ${item.words} 词</small></div><span>第 ${item.stage} 关<br>🪙 ${item.coins}</span></article>`).join('')}</div>
   </main>`, 'rank');
 }
 function profileView() {
-  return shell(`<div class="modal-backdrop"><section class="profile-modal">${spiritFigure('profile-spirit')}<h1>玩家档案</h1><form id="profile-form"><label>昵称<input required maxlength="12" name="nickname" value="${esc(state.user.profile.nickname)}"></label><button class="primary">保存</button></form><button class="ghost" data-action="logout">退出账号</button><button class="close" data-action="home">×</button></section></div>`);
+  return shell(`<div class="modal-backdrop"><section class="profile-modal">${mascotFigure('profile-spirit')}<h1>玩家档案</h1><form id="profile-form"><label>昵称<input required maxlength="12" name="nickname" value="${esc(state.user.profile.nickname)}"></label><button class="primary">保存</button></form><button class="ghost" data-action="logout">退出账号</button><button class="close" data-action="home">×</button></section></div>`);
 }
 function render() {
   if (!state.user) {
@@ -1844,7 +1835,6 @@ document.addEventListener('click', async event => {
   if (action === 'levels') { state.view = 'levels'; render(); }
   if (action === 'enter-level') {
     state.view = 'game';
-    state.lastPetQuote = petSpeech('start');
     render();
     if (state.game?.mode === 'falling') startFallingQuestion();
   }

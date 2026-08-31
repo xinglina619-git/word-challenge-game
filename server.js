@@ -524,4 +524,4 @@ const server = http.createServer(async (req, res) => {
   } catch (error) { return send(res, 400, { error: error.message || '操作失败' }); }
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`词灵星球试玩版正在运行：http://localhost:${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`单词消消养宠记试玩版正在运行：http://localhost:${PORT}`));

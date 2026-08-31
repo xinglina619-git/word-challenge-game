@@ -197,6 +197,8 @@ if (!serverSource.includes("url.pathname === '/review-games.js'")) throw new Err
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 if (!packageJson.scripts.check.includes('node --check pet-system.js')) throw new Error('语法检查没有覆盖宠物规则脚本');
 if (!packageJson.scripts.check.includes('node --check review-games.js')) throw new Error('语法检查没有覆盖复习关规则脚本');
+if (!indexSource.includes('<title>单词消消养宠记</title>')) throw new Error('浏览器标题尚未改名');
+if (packageJson.description !== '《单词消消养宠记》试玩版') throw new Error('项目说明尚未改名');
 for (const asset of [
   'poodle-poses.png', 'husky-poses.png', 'tibetan-mastiff-poses.png',
   'golden-retriever-poses.png', 'corgi-poses.png', 'shiba-inu-poses.png'
@@ -242,6 +244,9 @@ globalThis.__gameTest = {
   settleBoard: typeof settleBoard === 'function' ? settleBoard : null,
   gameState: state,
   gameView: typeof gameView === 'function' ? gameView : null,
+  levelIntroView: typeof levelIntroView === 'function' ? levelIntroView : null,
+  resultView: typeof resultView === 'function' ? resultView : null,
+  petNeedsAttention: typeof petNeedsAttention === 'function' ? petNeedsAttention : null,
   faceChoicesForWord: typeof faceChoicesForWord === 'function' ? faceChoicesForWord : null,
   tileFaceHtml: typeof tileFaceHtml === 'function' ? tileFaceHtml : null,
   pairFace: typeof pairFace === 'function' ? pairFace : null,
@@ -410,13 +415,14 @@ test.gameState.user = {
   }
 };
 const unclaimedHome = test.homeView();
-if (!unclaimedHome.includes('领取我的学习伙伴') || !unclaimedHome.includes('每个账号只能选择一只')) throw new Error('未领取宠物的首页引导不完整');
+if (!unclaimedHome.includes('领取我的小狗') || unclaimedHome.includes('/assets/dogs/')) throw new Error('未领取宠物的首页引导不正确');
 const petStore = test.petStoreView();
 if ((petStore.match(/class="pet-catalog-card/g) || []).length !== 6) throw new Error('宠物商店没有展示6种可选宠物');
 if (!petStore.includes('领取后可以随时免费改名') || !petStore.includes('宠物品类不能更换')) throw new Error('宠物永久选择提示不明确');
 test.gameState.user.progress.pet = {
   speciesId: 'corgi', name: '小云', adoptedAt: '2026-08-24T00:00:00.000Z', growth: 70,
-  foodInventory: { starBiscuit: 2, fruitCup: 0, nutritionMeal: 0, celebrationCake: 0 }
+  foodInventory: { starBiscuit: 2, fruitCup: 0, nutritionMeal: 0, celebrationCake: 0 },
+  catalogVersion: 2, needsBreedSelection: false, onboardingStep: 'complete', lastFedDate: '2026-08-31'
 };
 const home = test.homeView();
 if (!home.includes('继续学习') || !home.includes('成长奖励')) throw new Error('首页没有区分学习和奖励入口');
@@ -424,6 +430,44 @@ if (home.indexOf('继续学习') > home.indexOf('成长奖励')) throw new Error
 if (!home.includes('开始学习')) throw new Error('首页主学习按钮缺失');
 if (!home.includes('自动依次朗读英文和中文') || !home.includes('词块随后直接消失')) throw new Error('首次首页没有准确说明消除后的双语自动朗读与直接消失');
 if (home.includes('再听') || home.includes('弹出')) throw new Error('首次首页仍承诺已移除的重听卡或弹出反馈');
+if (!test.levelIntroView || !test.resultView || !test.petNeedsAttention) throw new Error('页面边界测试接口不完整');
+if (test.petNeedsAttention({ pet: { speciesId: 'corgi', onboardingStep: 'complete', lastFedDate: '2026-08-31' } }, '2026-08-31')) {
+  throw new Error('已完成当天照顾的小狗不应显示红点');
+}
+test.gameState.view = 'login';
+if (!test.authView().includes('单词消消养宠记') || test.authView().includes('词灵星球')) throw new Error('登录页名称尚未统一');
+if (test.authView().includes('/assets/dogs/')) throw new Error('登录页错误展示了已领养小狗素材');
+test.gameState.user = {
+  profile: { nickname: '小测试员' },
+  progress: {
+    stage: 1, coins: 30, collected: [], mistakes: {}, inventory: { hint: 3, shuffle: 2, addMoves: 1 },
+    tutorials: { match3: false, pair: false }, review: {}, learnedWords: [],
+    pet: { speciesId: 'corgi', name: '豆豆', adoptedAt: '2026-08-24T00:00:00.000Z', growth: 70, level: 2,
+      foodInventory: {}, catalogVersion: 2, needsBreedSelection: false, onboardingStep: 'earn', lastFedDate: '' }
+  }
+};
+const homeWithoutDog = test.homeView();
+if (homeWithoutDog.includes('豆豆') || homeWithoutDog.includes('/assets/dogs/') || homeWithoutDog.includes('dog-figure')) {
+  throw new Error('主页仍然展示已领取小狗');
+}
+if (!homeWithoutDog.includes('pet-attention-dot') || !homeWithoutDog.includes('快去帮你的小狗赚金币')) {
+  throw new Error('主页缺少宠物屋红点或任务摘要');
+}
+test.gameState.game = test.newGame(1);
+const introWithoutDog = test.levelIntroView();
+const gameWithoutDog = test.gameView();
+test.gameState.result = { win: true, level: 1, mode: 'match3', score: 100, combo: 2, learned: 4, stars: 3, xp: 20, coins: 24, mission: { type: 'normal' } };
+const resultWithoutDog = test.resultView();
+for (const [viewName, html] of [['关卡介绍', introWithoutDog], ['闯关', gameWithoutDog], ['结算', resultWithoutDog]]) {
+  if (html.includes('豆豆') || html.includes('/assets/dogs/') || html.includes('pet-speech-bubble') || html.includes('dog-figure')) {
+    throw new Error(`${viewName}仍然展示宠物`);
+  }
+}
+test.gameState.user.progress.pet = {
+  speciesId: 'corgi', name: '小云', adoptedAt: '2026-08-24T00:00:00.000Z', growth: 70,
+  foodInventory: { starBiscuit: 2, fruitCup: 0, nutritionMeal: 0, celebrationCake: 0 },
+  catalogVersion: 2, needsBreedSelection: false, onboardingStep: 'complete', lastFedDate: '2026-08-31'
+};
 const petHome = test.petHomeView();
 if (!petHome.includes('小云 · Lv.2') || !petHome.includes('库存 2') || !petHome.includes('宠物不会饥饿、生病或退级')) throw new Error('宠物之家缺少等级、食物背包或无压力说明');
 const petShop = test.shopView();

@@ -190,7 +190,7 @@ try {
   $package = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'package.json') | ConvertFrom-Json
   $index = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'index.html')
   $readme = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'README.md')
-  Assert-True ($package.version -eq '0.3.0') 'Package version must be 0.3.0'
+  Assert-True ($package.version -eq '0.4.0') 'Package version must be 0.4.0'
   Assert-Contains $package.scripts.test 'launcher_test.ps1' 'npm test must include the launcher test'
   Assert-Contains $index '/app.js?v=22' 'app.js cache version must be updated'
   Assert-Contains $index '/styles.css?v=23' 'styles.css cache version must be updated'
