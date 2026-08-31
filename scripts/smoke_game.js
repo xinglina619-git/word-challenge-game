@@ -245,6 +245,7 @@ globalThis.__gameTest = {
   gameState: state,
   gameView: typeof gameView === 'function' ? gameView : null,
   levelIntroView: typeof levelIntroView === 'function' ? levelIntroView : null,
+  levelsView: typeof levelsView === 'function' ? levelsView : null,
   resultView: typeof resultView === 'function' ? resultView : null,
   petNeedsAttention: typeof petNeedsAttention === 'function' ? petNeedsAttention : null,
   faceChoicesForWord: typeof faceChoicesForWord === 'function' ? faceChoicesForWord : null,
@@ -462,6 +463,28 @@ for (const [viewName, html] of [['关卡介绍', introWithoutDog], ['闯关', ga
   if (html.includes('豆豆') || html.includes('/assets/dogs/') || html.includes('pet-speech-bubble') || html.includes('dog-figure')) {
     throw new Error(`${viewName}仍然展示宠物`);
   }
+}
+if (!test.levelsView) throw new Error('关卡列表展示边界测试接口不完整');
+const assertLearningViewWithoutDog = (viewName, html) => {
+  for (const forbidden of ['豆豆', '/assets/dogs/', 'pet-speech-bubble', 'dog-figure', 'spirit-figure', 'pet-room-figure']) {
+    if (html.includes(forbidden)) throw new Error(`${viewName}仍然展示宠物：${forbidden}`);
+  }
+};
+assertLearningViewWithoutDog('关卡列表', test.levelsView());
+const reviewWordsForVisibility = [
+  { word: 'apple', zh: '苹果' }, { word: 'book', zh: '书' }, { word: 'cloud', zh: '云' },
+  { word: 'dance', zh: '跳舞' }, { word: 'fish', zh: '鱼' }
+];
+const learningViews = [
+  ['三消闯关', test.newGame(1), 'match3'],
+  ['配对闯关', test.newGame(3), 'pair'],
+  ['拼写闯关', test.newSpellingGame(20, reviewWordsForVisibility, () => .5), 'spelling'],
+  ['落体闯关', test.newFallingGame(25, reviewWordsForVisibility, false, () => .5), 'falling']
+];
+for (const [viewName, game, mode] of learningViews) {
+  if (game.mode !== mode) throw new Error(`${viewName}没有构造为${mode}分支`);
+  test.gameState.game = game;
+  assertLearningViewWithoutDog(viewName, test.gameView());
 }
 test.gameState.user.progress.pet = {
   speciesId: 'corgi', name: '小云', adoptedAt: '2026-08-24T00:00:00.000Z', growth: 70,
