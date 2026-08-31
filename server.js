@@ -8,7 +8,7 @@ const PetSystem = require('./pet-system');
 const ReviewGames = require('./review-games');
 
 const APP_ID = 'word-spirit-planet';
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.4.0';
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = __dirname;
 const DATA_DIR = process.env.WORD_SPIRIT_DATA_DIR || path.join(ROOT, 'data');
@@ -58,6 +58,23 @@ function clamp(value, min, max, fallback = min) {
 function safeStringList(input, limit = 100, length = 100) {
   return Array.isArray(input) ? input.slice(-limit).map(value => String(value).slice(0, length)) : [];
 }
+function shanghaiDate(now = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(now);
+}
+function advancePetOnboarding(pet, event) {
+  if (!pet || pet.onboardingStep === 'complete') return;
+  if (event === 'feed') pet.onboardingStep = 'complete';
+  else if (event === 'buy-food') pet.onboardingStep = 'feed';
+  else if (event === 'earn-coins' && pet.onboardingStep === 'earn') pet.onboardingStep = 'buy';
+}
+function onboardingForMigratedPet(progress) {
+  const foodCount = Object.values(progress.pet.foodInventory || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+  if (foodCount > 0) return 'feed';
+  if (progress.coins >= PetSystem.FOODS[0].price) return 'buy';
+  return 'earn';
+}
 function normalizeProgress(progress = {}) {
   const spirits = progress.spirits && typeof progress.spirits === 'object' && !Array.isArray(progress.spirits)
     ? progress.spirits : { lingling: 1 };
@@ -92,7 +109,7 @@ function normalizeProgress(progress = {}) {
     learnedWords: ReviewGames.normalizeLearnedWords(learnedSeed),
     review: ReviewGames.normalizeReview(progress.review),
     pet: PetSystem.normalizePetState(progress.pet),
-    migrationVersion: clamp(progress.migrationVersion, 0, 1, 0),
+    migrationVersion: clamp(progress.migrationVersion, 0, 2, 0),
     processedOperations: safeStringList(progress.processedOperations, 100, 100),
     processedRewards: safeStringList(progress.processedRewards, 100, 100),
     legacy: {
@@ -104,15 +121,25 @@ function normalizeProgress(progress = {}) {
   };
 }
 function migrateProgress(input = {}) {
+  const sourceVersion = clamp(input.migrationVersion, 0, 2, 0);
   const progress = normalizeProgress(input);
-  if (progress.migrationVersion >= 1) return progress;
-  progress.coins = clamp(progress.coins + progress.tickets * 80 + progress.dust * 5, 0, 999999, 0);
-  progress.tickets = 0;
-  progress.dust = 0;
-  progress.draws = 0;
-  progress.pity = 0;
-  progress.migrationVersion = 1;
-  return progress;
+  if (sourceVersion < 1) {
+    progress.coins = clamp(progress.coins + progress.tickets * 80 + progress.dust * 5, 0, 999999, 0);
+    progress.tickets = 0;
+    progress.dust = 0;
+    progress.draws = 0;
+    progress.pity = 0;
+  }
+  if (sourceVersion < 2) {
+    if (progress.pet.needsBreedSelection) {
+      progress.pet.onboardingStep = onboardingForMigratedPet(progress);
+    } else if (!progress.pet.speciesId) {
+      progress.pet.catalogVersion = 2;
+      progress.pet.onboardingStep = 'complete';
+    }
+  }
+  progress.migrationVersion = 2;
+  return normalizeProgress(progress);
 }
 function migrateAllUsers() {
   const db = readDb();
@@ -203,7 +230,7 @@ const server = http.createServer(async (req, res) => {
       const profile = profileFrom(body);
       const user = {
         id: crypto.randomUUID(), phone, salt, passwordHash: hash(password, salt), profile,
-        progress: normalizeProgress({ stage: 1, coins: 30, tickets: 0, dust: 0, migrationVersion: 1 }), createdAt: new Date().toISOString()
+        progress: normalizeProgress({ stage: 1, coins: 30, tickets: 0, dust: 0, migrationVersion: 2 }), createdAt: new Date().toISOString()
       };
       db.users.push(user); saveDb(db);
       return send(res, 201, {
@@ -302,21 +329,39 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/pet/adopt') {
       const context = targetContext(req); if (!context) return send(res, 401, { error: '请先登录' });
       const body = await getBody(req);
-      if (context.progress.pet.speciesId) return send(res, 409, { error: '每个账号只能领取一只宠物' });
-      const pet = PetSystem.petById(body.speciesId);
+      const currentPet = context.progress.pet;
+      const isReselection = currentPet.needsBreedSelection;
+      if (currentPet.speciesId && !isReselection) return send(res, 409, { error: '每个账号只能领取一只小狗' });
+      const dog = PetSystem.petById(body.speciesId);
       const name = String(body.name || '').trim();
-      if (!pet) return send(res, 400, { error: '宠物品类无效' });
-      if (!PetSystem.validPetName(name)) return send(res, 400, { error: '宠物名字需为1至8个中文、英文或数字' });
+      if (!dog) return send(res, 400, { error: '犬种无效' });
+      if (!PetSystem.validPetName(name)) return send(res, 400, { error: '小狗名字需为1至8个中文、英文或数字' });
+      const basePet = isReselection ? currentPet : {
+        adoptedAt: new Date().toISOString(), growth: 0, foodInventory: {}, onboardingStep: 'earn'
+      };
       context.progress.pet = PetSystem.normalizePetState({
-        speciesId: pet.id,
+        ...basePet,
+        speciesId: dog.id,
         name,
-        adoptedAt: new Date().toISOString(),
-        growth: 0,
-        foodInventory: {}
+        catalogVersion: 2,
+        needsBreedSelection: false
       });
       context.target.progress = context.progress;
       saveDb(context.db);
       return send(res, 200, { user: publicUser(context.target) });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/pet/visit') {
+      const context = targetContext(req); if (!context) return send(res, 401, { error: '请先登录' });
+      const pet = context.progress.pet;
+      if (!pet.speciesId) return send(res, 409, { error: pet.needsBreedSelection ? '请先重新选择小狗' : '请先领取小狗' });
+      const today = shanghaiDate();
+      const showHungerPrompt = pet.lastFedDate !== today && pet.lastHungerPromptDate !== today;
+      if (showHungerPrompt) {
+        pet.lastHungerPromptDate = today;
+        context.target.progress = context.progress;
+        saveDb(context.db);
+      }
+      return send(res, 200, { user: publicUser(context.target), petVisit: { today, showHungerPrompt } });
     }
     if (req.method === 'PATCH' && url.pathname === '/api/pet/name') {
       const context = targetContext(req); if (!context) return send(res, 401, { error: '请先登录' });
@@ -345,7 +390,10 @@ const server = http.createServer(async (req, res) => {
       const price = food?.price || tool.price;
       if (context.progress.coins < price) return send(res, 409, { error: `金币不足，还差 ${price - context.progress.coins} 金币` });
       context.progress.coins -= price;
-      if (food) context.progress.pet.foodInventory[food.id] += 1;
+      if (food) {
+        context.progress.pet.foodInventory[food.id] += 1;
+        advancePetOnboarding(context.progress.pet, 'buy-food');
+      }
       else context.progress.inventory[body.itemId] += 1;
       rememberOperation(context.progress, key);
       context.target.progress = context.progress;
@@ -359,18 +407,33 @@ const server = http.createServer(async (req, res) => {
       const food = PetSystem.foodById(body.foodId);
       if (!food) return send(res, 400, { error: '食物不存在' });
       if (!context.progress.pet.speciesId) return send(res, 409, { error: '请先领取宠物' });
-      if (context.progress.pet.level >= 10) return send(res, 409, { error: '宠物已经满级' });
+      if (context.progress.pet.level >= 10) return send(res, 409, { error: '小狗已经满级，食物会继续保留在背包里' });
       if (context.progress.pet.foodInventory[food.id] <= 0) return send(res, 409, { error: '背包里没有这种食物' });
       const oldLevel = context.progress.pet.level;
       context.progress.pet.foodInventory[food.id] -= 1;
       context.progress.pet.growth = Math.min(2400, context.progress.pet.growth + food.growth);
       context.progress.pet.level = PetSystem.petLevelForGrowth(context.progress.pet.growth);
+      const today = shanghaiDate();
+      context.progress.pet.lastFedDate = today;
+      advancePetOnboarding(context.progress.pet, 'feed');
+      const newLevel = context.progress.pet.level;
+      const unlockedTricks = PetSystem.tricksUnlockedBetween(oldLevel, newLevel);
+      const nextTrick = PetSystem.nextTrickForLevel(newLevel);
       rememberOperation(context.progress, key);
       context.target.progress = context.progress;
       saveDb(context.db);
       return send(res, 200, {
         user: publicUser(context.target),
-        feeding: { foodId: food.id, growth: food.growth, oldLevel, newLevel: context.progress.pet.level }
+        feeding: {
+          foodId: food.id,
+          growth: food.growth,
+          oldLevel,
+          newLevel,
+          today,
+          growthRemaining: PetSystem.growthRemaining(context.progress.pet.growth),
+          nextTrick,
+          unlockedTrickIds: unlockedTricks.map(item => item.id)
+        }
       });
     }
     if (req.method === 'POST' && url.pathname === '/api/game/complete') {
@@ -395,6 +458,7 @@ const server = http.createServer(async (req, res) => {
       context.progress.xp = clamp(context.progress.xp + xp, 0, 9999999, 0);
       context.progress.streak += 1;
       context.progress.bestCombo = Math.max(context.progress.bestCombo, clamp(body.maxCombo, 0, 9999, 0));
+      advancePetOnboarding(context.progress.pet, 'earn-coins');
       rememberReward(context.progress, runId);
       context.target.progress = context.progress;
       saveDb(context.db);

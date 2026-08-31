@@ -95,7 +95,7 @@ async function stopServer(child) {
     await waitForServer();
     const health = await request('GET', '/api/health');
     assert.deepStrictEqual(health.body, {
-      app: 'word-spirit-planet', version: '0.3.0', ok: true
+      app: 'word-spirit-planet', version: '0.4.0', ok: true
     });
 
     const backgroundMusic = await request('GET', '/assets/snake-countdown-bgm.mp3');
@@ -129,7 +129,7 @@ async function stopServer(child) {
     const originalToken = loggedIn.body.token;
     assert.strictEqual(loggedIn.body.user.progress.coins, 30);
     assert.strictEqual(loggedIn.body.user.progress.tickets, 0);
-    assert.strictEqual(loggedIn.body.user.progress.migrationVersion, 1);
+    assert.strictEqual(loggedIn.body.user.progress.migrationVersion, 2);
 
     assert.strictEqual((await request('POST', '/api/learned-word', { word: 'not-in-textbook', result: 'correct' }, originalToken)).status, 400);
     const learnedWords = ['apple', 'cat', 'bag', 'red', 'dog', 'book', 'pen', 'blue', 'hello', 'please', 'father', 'mother'];
@@ -150,12 +150,27 @@ async function stopServer(child) {
     assert.strictEqual(tutorialComplete.body.user.progress.review.fallingTutorialDone, true);
 
     assert.strictEqual((await request('POST', '/api/pet/adopt', { speciesId: 'invalid', name: '坏坏' }, originalToken)).status, 400);
+    assert.strictEqual((await request('POST', '/api/pet/adopt', { speciesId: 'poodle', name: '' }, originalToken)).status, 400);
     const adopted = await request('POST', '/api/pet/adopt', { speciesId: 'poodle', name: '团团' }, originalToken);
     assert.strictEqual(adopted.status, 200);
     assert.strictEqual(adopted.body.user.progress.pet.speciesId, 'poodle');
     assert.strictEqual(adopted.body.user.progress.pet.name, '团团');
-    const duplicateAdoption = await request('POST', '/api/pet/adopt', { speciesId: 'husky', name: '火火' }, originalToken);
-    assert.strictEqual(duplicateAdoption.status, 409);
+    assert.strictEqual(adopted.body.user.progress.pet.catalogVersion, 2);
+    assert.strictEqual(adopted.body.user.progress.pet.onboardingStep, 'earn');
+    assert.strictEqual((await request('POST', '/api/pet/adopt', { speciesId: 'husky', name: '火火' }, originalToken)).status, 409);
+
+    const firstVisit = await request('POST', '/api/pet/visit', {}, originalToken);
+    const secondVisit = await request('POST', '/api/pet/visit', {}, originalToken);
+    assert.strictEqual(firstVisit.status, 200);
+    assert.strictEqual(firstVisit.body.petVisit.showHungerPrompt, true);
+    assert.strictEqual(secondVisit.status, 200);
+    assert.strictEqual(secondVisit.body.petVisit.showHungerPrompt, false);
+
+    const earned = await request('POST', '/api/game/complete', {
+      runId: 'pet-onboarding-earn', level: 1, mode: 'match3', stars: 3, missionType: 'normal', sessionCoins: 0, maxCombo: 0
+    }, originalToken);
+    assert.strictEqual(earned.status, 200);
+    assert.strictEqual(earned.body.user.progress.pet.onboardingStep, 'buy');
 
     const renamed = await request('PATCH', '/api/pet/name', { name: '云宝' }, originalToken);
     assert.strictEqual(renamed.status, 200);
@@ -165,11 +180,12 @@ async function stopServer(child) {
 
     const bought = await request('POST', '/api/shop/purchase', { itemId: 'starBiscuit', operationId: 'buy-1' }, originalToken);
     assert.strictEqual(bought.status, 200);
-    assert.strictEqual(bought.body.user.progress.coins, 10);
+    assert.strictEqual(bought.body.user.progress.coins, 38);
+    assert.strictEqual(bought.body.user.progress.pet.onboardingStep, 'feed');
     assert.strictEqual(bought.body.user.progress.pet.foodInventory.starBiscuit, 1);
     const duplicateBuy = await request('POST', '/api/shop/purchase', { itemId: 'starBiscuit', operationId: 'buy-1' }, originalToken);
     assert.strictEqual(duplicateBuy.status, 200);
-    assert.strictEqual(duplicateBuy.body.user.progress.coins, 10);
+    assert.strictEqual(duplicateBuy.body.user.progress.coins, 38);
     assert.strictEqual(duplicateBuy.body.user.progress.pet.foodInventory.starBiscuit, 1);
     assert.strictEqual((await request('POST', '/api/shop/purchase', { itemId: 'celebrationCake', operationId: 'buy-2' }, originalToken)).status, 409);
 
@@ -178,6 +194,14 @@ async function stopServer(child) {
     assert.strictEqual(fed.body.user.progress.pet.growth, 10);
     assert.strictEqual(fed.body.user.progress.pet.level, 1);
     assert.strictEqual(fed.body.user.progress.pet.foodInventory.starBiscuit, 0);
+    assert.strictEqual(fed.body.user.progress.pet.onboardingStep, 'complete');
+    assert.strictEqual(fed.body.user.progress.pet.lastFedDate, fed.body.feeding.today);
+    assert.strictEqual(fed.body.feeding.growthRemaining, 50);
+    assert.strictEqual(fed.body.feeding.nextTrick.id, 'tailWelcome');
+    assert.deepStrictEqual(fed.body.feeding.unlockedTrickIds, []);
+    const afterFeedVisit = await request('POST', '/api/pet/visit', {}, originalToken);
+    assert.strictEqual(afterFeedVisit.status, 200);
+    assert.strictEqual(afterFeedVisit.body.petVisit.showHungerPrompt, false);
     const duplicateFeed = await request('POST', '/api/pet/feed', { foodId: 'starBiscuit', operationId: 'feed-1' }, originalToken);
     assert.strictEqual(duplicateFeed.status, 200);
     assert.strictEqual(duplicateFeed.body.user.progress.pet.growth, 10);
@@ -188,34 +212,65 @@ async function stopServer(child) {
     }, originalToken);
     assert.strictEqual(spellingReward.status, 200);
     assert.strictEqual(spellingReward.body.reward.coins, 48);
-    assert.strictEqual(spellingReward.body.user.progress.coins, 58);
+    assert.strictEqual(spellingReward.body.user.progress.coins, 86);
     const duplicateReward = await request('POST', '/api/game/complete', {
       runId: 'run-spelling-1', level: 1, mode: 'spelling', stars: 3, missionType: 'normal', sessionCoins: 0, maxCombo: 0
     }, originalToken);
     assert.strictEqual(duplicateReward.status, 200);
     assert.strictEqual(duplicateReward.body.reward.duplicate, true);
-    assert.strictEqual(duplicateReward.body.user.progress.coins, 58);
+    assert.strictEqual(duplicateReward.body.user.progress.coins, 86);
 
     await stopServer(child);
     const legacyDb = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
     const legacyUser = legacyDb.users.find(item => item.phone === account.phone);
-    legacyUser.progress.coins = 0;
-    legacyUser.progress.tickets = 2;
-    legacyUser.progress.dust = 3;
-    legacyUser.progress.migrationVersion = 0;
+    legacyUser.progress.pet = {
+      speciesId: 'cloud', name: '云宝', adoptedAt: '2026-08-24T00:00:00.000Z', growth: 70,
+      foodInventory: { starBiscuit: 2, fruitCup: 1, nutritionMeal: 0, celebrationCake: 0 }
+    };
+    legacyUser.progress.migrationVersion = 1;
+    const preserved = {
+      coins: legacyUser.progress.coins,
+      inventory: legacyUser.progress.inventory,
+      stage: legacyUser.progress.stage,
+      mistakes: legacyUser.progress.mistakes,
+      learnedWords: legacyUser.progress.learnedWords,
+      pet: { name: '云宝', adoptedAt: legacyUser.progress.pet.adoptedAt, growth: 70, foodInventory: legacyUser.progress.pet.foodInventory }
+    };
     fs.writeFileSync(dataFile, JSON.stringify(legacyDb, null, 2));
     child = startServer();
     await waitForServer();
-    const migrated = await request('GET', '/api/me', null, originalToken);
-    assert.strictEqual(migrated.status, 200);
-    assert.strictEqual(migrated.body.user.progress.coins, 175);
-    assert.strictEqual(migrated.body.user.progress.tickets, 0);
-    assert.strictEqual(migrated.body.user.progress.dust, 0);
-    assert.strictEqual(migrated.body.user.progress.migrationVersion, 1);
+    const pending = await request('GET', '/api/me', null, originalToken);
+    assert.strictEqual(pending.status, 200);
+    assert.strictEqual(pending.body.user.progress.migrationVersion, 2);
+    assert.strictEqual(pending.body.user.progress.pet.speciesId, '');
+    assert.strictEqual(pending.body.user.progress.pet.needsBreedSelection, true);
+    assert.strictEqual(pending.body.user.progress.pet.name, '云宝');
+    assert.strictEqual(pending.body.user.progress.pet.growth, 70);
+    assert.strictEqual(pending.body.user.progress.pet.foodInventory.starBiscuit, 2);
+    const reselected = await request('POST', '/api/pet/adopt', { speciesId: 'husky', name: '云宝' }, originalToken);
+    assert.strictEqual(reselected.status, 200);
+    assert.strictEqual(reselected.body.user.progress.pet.speciesId, 'husky');
+    assert.strictEqual(reselected.body.user.progress.pet.needsBreedSelection, false);
+    assert.strictEqual(reselected.body.user.progress.pet.adoptedAt, preserved.pet.adoptedAt);
+    assert.strictEqual(reselected.body.user.progress.pet.growth, preserved.pet.growth);
+    assert.deepStrictEqual(reselected.body.user.progress.pet.foodInventory, preserved.pet.foodInventory);
+    assert.strictEqual(reselected.body.user.progress.coins, preserved.coins);
+    assert.deepStrictEqual(reselected.body.user.progress.inventory, preserved.inventory);
+    assert.strictEqual(reselected.body.user.progress.stage, preserved.stage);
+    assert.deepStrictEqual(reselected.body.user.progress.mistakes, preserved.mistakes);
+    assert.deepStrictEqual(reselected.body.user.progress.learnedWords, preserved.learnedWords);
     await stopServer(child);
+    const maxLevelDb = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+    const maxLevelUser = maxLevelDb.users.find(item => item.phone === account.phone);
+    maxLevelUser.progress.pet.growth = 2400;
+    maxLevelUser.progress.pet.foodInventory.starBiscuit = 1;
+    fs.writeFileSync(dataFile, JSON.stringify(maxLevelDb, null, 2));
     child = startServer();
     await waitForServer();
-    assert.strictEqual((await request('GET', '/api/me', null, originalToken)).body.user.progress.coins, 175);
+    const maxLevelFeed = await request('POST', '/api/pet/feed', { foodId: 'starBiscuit', operationId: 'feed-max-level' }, originalToken);
+    assert.strictEqual(maxLevelFeed.status, 409);
+    assert.strictEqual(maxLevelFeed.body.error, '小狗已经满级，食物会继续保留在背包里');
+    assert.strictEqual((await request('GET', '/api/me', null, originalToken)).body.user.progress.pet.foodInventory.starBiscuit, 1);
 
     const changed = await request('POST', '/api/password/reset-local', {
       phone: account.phone,

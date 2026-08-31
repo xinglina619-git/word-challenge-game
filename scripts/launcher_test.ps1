@@ -146,7 +146,7 @@ try {
   }
   Assert-True ($started.ExitCode -eq 0) ("An unused port should start Word Spirit Planet`n" + $started.Output)
   $health = Wait-Health $startPort 'word-spirit-planet'
-  Assert-True ($health.version -eq '0.3.0' -and $health.ok -eq $true) 'Started health identity does not match'
+  Assert-True ($health.version -eq '0.4.0' -and $health.ok -eq $true) 'Started health identity does not match'
   if ($duplicatePathEnvironment) {
     Assert-Contains $started.Output 'WORD_SPIRIT_PATH_NORMALIZED' 'Duplicate Path keys must be normalized before Start-Process'
   }
