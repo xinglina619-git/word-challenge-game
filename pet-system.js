@@ -6,10 +6,7 @@
   'use strict';
 
   const LEVEL_THRESHOLDS = Object.freeze([0, 60, 150, 280, 450, 680, 980, 1360, 1830, 2400]);
-  const QUOTE_SCENES = Object.freeze([
-    'home', 'start', 'combo', 'star1', 'star2', 'star3',
-    'feedBasic', 'feedPremium', 'levelUp', 'retry', 'tap'
-  ]);
+  const QUOTE_SCENES = Object.freeze(['welcome', 'hunger', 'feedBasic', 'feedPremium', 'levelUp', 'tap', 'maxLevel']);
   const FOODS = Object.freeze([
     Object.freeze({ id: 'starBiscuit', name: '星星饼干', icon: '🍪', price: 20, growth: 10, quoteScene: 'feedBasic' }),
     Object.freeze({ id: 'fruitCup', name: '鲜果杯', icon: '🍓', price: 50, growth: 30, quoteScene: 'feedBasic' }),
@@ -17,44 +14,47 @@
     Object.freeze({ id: 'celebrationCake', name: '庆典蛋糕', icon: '🎂', price: 180, growth: 140, quoteScene: 'feedPremium' })
   ]);
 
+  const LEGACY_PET_IDS = Object.freeze(['lingling', 'sprout', 'bubble', 'candy', 'spark', 'cloud', 'moon', 'rainbow']);
   const PET_SEEDS = Object.freeze([
-    { id: 'lingling', name: '灵灵', species: '星光精灵', personality: '阳光、可靠', asset: '/assets/word-spirit.png', slogan: '每个单词，都是一颗新星！', marks: ['星光亮起来', '我会稳稳陪着你', '又点亮了一颗星', '向着星河出发'] },
-    { id: 'sprout', name: '星芽灵', species: '森林芽灵', personality: '温柔、耐心', asset: '/assets/spirit-sprout-v2.png', slogan: '今天记住一点点，明天就会长成大树！', marks: ['小芽又长高啦', '一点点也是成长', '让知识慢慢发芽', '森林在为你鼓掌'] },
-    { id: 'bubble', name: '泡泡灵', species: '水泡精灵', personality: '活泼、调皮', asset: '/assets/spirit-bubble-v1.png', slogan: '啵！这个单词被我们抓住啦！', marks: ['啵的一声答对啦', '泡泡要飞起来咯', '把难题吹成小泡泡', '咕噜咕噜继续冲'] },
-    { id: 'candy', name: '糖果灵', species: '甜甜兽', personality: '可爱、乐观', asset: '/assets/spirit-candy-v1.png', slogan: '认真学习，比糖果还甜！', marks: ['甜甜的进步来啦', '这次表现像糖果一样棒', '把认真装进糖果罐', '再添一颗勇气糖'] },
-    { id: 'spark', name: '火花灵', species: '闪电兽', personality: '勇敢、热血', asset: '/assets/spirit-spark-v1.png', slogan: '火花全开，再来一关！', marks: ['火花全开', '勇气已经点燃', '闪电速度向前冲', '把困难照亮吧'] },
-    { id: 'cloud', name: '云朵灵', species: '云朵兽', personality: '悠闲、治愈', asset: '/assets/spirit-cloud-v1.png', slogan: '慢慢来，云朵也会飞到终点。', marks: ['慢慢来就很好', '坐上云朵再试一次', '轻轻松松向前飞', '云朵一直陪着你'] },
-    { id: 'moon', name: '月光灵', species: '月光兽', personality: '安静、体贴', asset: '/assets/spirit-moon-v1.png', slogan: '别怕答错，月光会陪你再试一次。', marks: ['月光在这里', '安静想一想就好', '夜空记住了你的努力', '我陪你再试一次'] },
-    { id: 'rainbow', name: '彩虹灵', species: '彩虹幻兽', personality: '欢乐、爱庆祝', asset: '/assets/spirit-rainbow-v2.png', slogan: '你把今天变成彩虹啦！', marks: ['彩虹庆典开始啦', '每一种颜色都在欢呼', '今天闪闪发亮', '把进步画成彩虹'] }
+    { id: 'poodle', species: '贵宾犬', personality: '聪明、亲人', asset: '/assets/dogs/poodle-poses.png', cue: '小卷毛', mood: '开心' },
+    { id: 'husky', species: '哈士奇', personality: '活泼、好奇', asset: '/assets/dogs/husky-poses.png', cue: '亮眼睛', mood: '神气' },
+    { id: 'tibetanMastiff', species: '藏獒', personality: '稳重、勇敢', asset: '/assets/dogs/tibetan-mastiff-poses.png', cue: '暖鬃毛', mood: '安心' },
+    { id: 'goldenRetriever', species: '金毛寻回犬', personality: '温柔、可靠', asset: '/assets/dogs/golden-retriever-poses.png', cue: '金耳朵', mood: '温暖' },
+    { id: 'corgi', species: '柯基犬', personality: '热情、机灵', asset: '/assets/dogs/corgi-poses.png', cue: '小短腿', mood: '有精神' },
+    { id: 'shibaInu', species: '柴犬', personality: '独立、可爱', asset: '/assets/dogs/shiba-inu-poses.png', cue: '卷尾巴', mood: '满足' }
   ]);
 
   function buildQuotes(seed) {
-    const [a, b, c, d] = seed.marks;
     return Object.freeze({
-      home: Object.freeze([`${a}，今天想认识几个单词？`, `${b}，我们一起开始吧！`, `${c}，欢迎回来！`, `${d}，新的学习旅程要开始啦！`]),
-      start: Object.freeze([`${a}，准备出发！`, `${b}，这一关交给我们！`, `${c}，先看清再行动。`, `${d}，认真又勇敢地开始吧！`]),
-      combo: Object.freeze([`${a}，连击继续！`, `${b}，节奏太棒啦！`, `${c}，又连在一起了！`, `${d}，下一次也一定行！`]),
-      star1: Object.freeze([`${a}，通关就是进步！`, `${b}，下一次会更熟练。`, `${c}，我们记住了新单词。`, `${d}，一步一步向前走！`]),
-      star2: Object.freeze([`${a}，两颗星在向你眨眼！`, `${b}，这次表现很扎实。`, `${c}，再细心一点就是三星！`, `${d}，我们离满星很近啦！`]),
-      star3: Object.freeze([`${a}，三星庆祝开始！`, `${b}，这一关漂亮拿下！`, `${c}，你的认真闪闪发光！`, `${d}，满星表现太精彩啦！`]),
-      feedBasic: Object.freeze([`${a}，谢谢你的点心！`, `${b}，这一口真有力量。`, `${c}，肚子和心情都暖暖的。`, `${d}，我会好好长大！`]),
-      feedPremium: Object.freeze([`${a}，这顿大餐太惊喜啦！`, `${b}，成长能量满满！`, `${c}，我要表演一个新动作！`, `${d}，谢谢你认真学习换来的美味！`]),
-      levelUp: Object.freeze([`${a}，我升级啦！`, `${b}，我们的努力变成成长了。`, `${c}，新动作已经解锁！`, `${d}，一起向下一级出发！`]),
-      retry: Object.freeze([`${a}，答错也能学会。`, `${b}，我们慢一点再试一次。`, `${c}，刚才的答案已经更熟悉了。`, `${d}，我相信你下一次能找到它！`]),
-      tap: Object.freeze([`${a}，我听见你来找我啦！`, `${b}，今天也要做学习伙伴。`, `${c}，摸摸头就更有精神啦！`, `${d}，要不要一起再学一会儿？`])
+      welcome: Object.freeze([`我的${seed.cue}已经准备好啦！`, '谢谢你选择我，我们会成为好朋友！', '这里就是我们的宠物屋啦！', '以后请多多关照，我会陪你一起成长！']),
+      hunger: Object.freeze(['主人，我的肚子咕咕叫啦。', '我有一点点饿，可以陪我吃点东西吗？', `我的${seed.cue}在提醒我该吃饭啦。`, '闻到香香的味道，我想吃一小口啦！']),
+      feedBasic: Object.freeze(['谢谢主人，这一口真香！', `吃完点心，我感觉${seed.mood}极了！`, '肚子和心情都暖暖的。', '我吃得好饱呀！', '谢谢你认真学习换来的点心！', '吃饱啦，我想去散散步！']),
+      feedPremium: Object.freeze(['哇，好丰盛的大餐，谢谢主人！', '成长能量满满，我想跳起来啦！', `我的${seed.cue}都开心起来啦！`, '吃得好满足，我要睡个香香的午觉！', '这顿饭让我充满了力量！', '谢谢你一直这么认真地照顾我！']),
+      levelUp: Object.freeze(['我升级啦，快看我的新特技！', '我们的努力变成新的本领啦！', '长大一点点，也开心一大步！', '谢谢主人，我学会新动作啦！']),
+      tap: Object.freeze(['我听见你来找我啦！', `摸摸${seed.cue}，今天也很开心！`, '我在宠物屋等你回来呢。', '要不要看看我学会的特技？']),
+      maxLevel: Object.freeze(['我已经长大啦，谢谢主人一直陪着我！', '所有特技都学会啦，摸摸我吧！', '我们是最棒的学习伙伴！', '食物留在背包里，今天陪我玩一会儿吧！'])
     });
   }
 
   const PETS = Object.freeze(PET_SEEDS.map(seed => Object.freeze({
     id: seed.id,
-    name: seed.name,
     species: seed.species,
     personality: seed.personality,
     asset: seed.asset,
-    slogan: seed.slogan,
     quotes: buildQuotes(seed)
   })));
   const PET_IDS = Object.freeze(PETS.map(item => item.id));
+  const TRICKS = Object.freeze([
+    Object.freeze({ id: 'tailWelcome', level: 2, name: '摇尾欢迎', pose: 'stand', animation: 'wag', effect: 'hearts' }),
+    Object.freeze({ id: 'happyBounce', level: 3, name: '开心蹦跳', pose: 'stand', animation: 'bounce', effect: 'stars' }),
+    Object.freeze({ id: 'spin', level: 4, name: '转圈圈', pose: 'stand', animation: 'spin', effect: 'stars' }),
+    Object.freeze({ id: 'shakePaw', level: 5, name: '握手', pose: 'paw', animation: 'paw', effect: 'hearts' }),
+    Object.freeze({ id: 'rollOver', level: 6, name: '打滚', pose: 'stand', animation: 'roll', effect: 'stars' }),
+    Object.freeze({ id: 'chaseTail', level: 7, name: '追尾巴', pose: 'stand', animation: 'chase', effect: 'paws' }),
+    Object.freeze({ id: 'dance', level: 8, name: '跳舞', pose: 'paw', animation: 'dance', effect: 'stars' }),
+    Object.freeze({ id: 'takeWalk', level: 9, name: '散步出发', pose: 'walk', animation: 'walk', effect: 'paws' }),
+    Object.freeze({ id: 'sleepWell', level: 10, name: '安心睡觉', pose: 'sleep', animation: 'sleep', effect: 'sleep' })
+  ]);
 
   function petById(id) {
     return PETS.find(item => item.id === String(id || '')) || null;
@@ -63,6 +63,8 @@
   function foodById(id) {
     return FOODS.find(item => item.id === String(id || '')) || null;
   }
+
+  function trickById(id) { return TRICKS.find(item => item.id === String(id || '')) || null; }
 
   function petLevelForGrowth(value) {
     const growth = Math.max(0, Math.min(LEVEL_THRESHOLDS.at(-1), Number(value) || 0));
@@ -86,6 +88,43 @@
     return safeLevel >= 10 ? null : LEVEL_THRESHOLDS[safeLevel];
   }
 
+  function nextTrickForLevel(level) {
+    const safeLevel = Math.max(1, Math.min(10, Number(level) || 1));
+    return TRICKS.find(item => item.level > safeLevel) || null;
+  }
+
+  function unlockedTricks(level) {
+    const safeLevel = Math.max(1, Math.min(10, Number(level) || 1));
+    return TRICKS.filter(item => item.level <= safeLevel);
+  }
+
+  function tricksUnlockedBetween(oldLevel, newLevel) {
+    const before = Math.max(1, Number(oldLevel) || 1);
+    const after = Math.max(before, Math.min(10, Number(newLevel) || before));
+    return TRICKS.filter(item => item.level > before && item.level <= after);
+  }
+
+  function growthRemaining(growth) {
+    const safeGrowth = Math.max(0, Math.min(LEVEL_THRESHOLDS.at(-1), Number(growth) || 0));
+    const level = petLevelForGrowth(safeGrowth);
+    const target = nextGrowthTarget(level);
+    return target === null ? 0 : target - safeGrowth;
+  }
+
+  function feedingGoal(feeding = {}) {
+    const oldLevel = Math.max(1, Number(feeding.oldLevel) || 1);
+    const newLevel = Math.max(oldLevel, Math.min(10, Number(feeding.newLevel) || oldLevel));
+    const unlocked = tricksUnlockedBetween(oldLevel, newLevel);
+    if (unlocked.length) {
+      const latest = unlocked.at(-1);
+      return unlocked.length === 1
+        ? `我升到 Lv.${newLevel} 啦，已经学会${latest.name}！`
+        : `我升到 Lv.${newLevel} 啦，这次解锁了 ${unlocked.length} 个新特技！`;
+    }
+    const next = nextTrickForLevel(newLevel);
+    return next ? `再获得 ${Math.max(0, Number(feeding.growthRemaining) || 0)} 成长值，我就能升到 Lv.${next.level}，学会${next.name}啦！` : '';
+  }
+
   function quoteFor(speciesId, scene, previous = '', random = Math.random) {
     const lines = petById(speciesId)?.quotes?.[scene] || [];
     const alternatives = lines.filter(line => line !== previous);
@@ -99,19 +138,32 @@
   }
 
   function normalizePetState(input = {}) {
-    const species = petById(input.speciesId);
+    const dog = petById(input.speciesId);
+    const rawLegacyId = String(input.legacySpeciesId || (!dog ? input.speciesId : '') || '');
+    const legacySpeciesId = LEGACY_PET_IDS.includes(rawLegacyId) ? rawLegacyId : '';
     const growth = Math.max(0, Math.min(LEVEL_THRESHOLDS.at(-1), Number(input.growth) || 0));
     const requestedName = String(input.name || '').trim();
+    const hasOldPet = Boolean(dog || legacySpeciesId || input.needsBreedSelection || input.adoptedAt || validPetName(requestedName));
+    const dateValue = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : '';
+    const onboardingStep = ['earn', 'buy', 'feed', 'complete'].includes(input.onboardingStep)
+      ? input.onboardingStep
+      : hasOldPet ? 'earn' : 'complete';
     return {
-      speciesId: species?.id || '',
-      name: species ? (validPetName(requestedName) ? requestedName : species.name) : '',
-      adoptedAt: species ? String(input.adoptedAt || '').slice(0, 40) : '',
+      speciesId: dog?.id || '',
+      name: hasOldPet && validPetName(requestedName) ? requestedName : '',
+      adoptedAt: hasOldPet ? String(input.adoptedAt || '').slice(0, 40) : '',
       growth,
       level: petLevelForGrowth(growth),
       foodInventory: Object.fromEntries(FOODS.map(food => [
         food.id,
         Math.max(0, Math.min(999, Number(input.foodInventory?.[food.id]) || 0))
-      ]))
+      ])),
+      catalogVersion: dog ? 2 : Math.max(0, Math.min(2, Number(input.catalogVersion) || 0)),
+      needsBreedSelection: Boolean(!dog && (legacySpeciesId || input.needsBreedSelection)),
+      onboardingStep,
+      lastFedDate: dateValue(input.lastFedDate),
+      lastHungerPromptDate: dateValue(input.lastHungerPromptDate),
+      legacySpeciesId
     };
   }
 
@@ -121,11 +173,19 @@
     FOODS,
     PETS,
     PET_IDS,
+    TRICKS,
+    LEGACY_PET_IDS,
     petById,
     foodById,
+    trickById,
     petLevelForGrowth,
     petStageForLevel,
     nextGrowthTarget,
+    nextTrickForLevel,
+    unlockedTricks,
+    tricksUnlockedBetween,
+    growthRemaining,
+    feedingGoal,
     quoteFor,
     validPetName,
     normalizePetState

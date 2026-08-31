@@ -416,7 +416,7 @@ function spiritFigure(className = '', spirit = activeSpirit(), level) {
   const owned = level ?? (state.user?.progress?.pet?.level || 1);
   const unique = spirit.asset ? 'unique-spirit' : '';
   const style = spirit.asset ? `--spirit-image:url('${spirit.asset}')` : '';
-  return `<span class="spirit-figure ${unique} growth-stage-${growthStage(owned)} ${className}" style="${style}" role="img" aria-label="${spirit.name}"></span>`;
+  return `<span class="spirit-figure ${unique} growth-stage-${growthStage(owned)} ${className}" style="${style}" role="img" aria-label="${spirit.species || spirit.name || '学习伙伴'}"></span>`;
 }
 function spiritById(id) { return SPIRITS.find(item => item.id === id) || SPIRITS[0]; }
 function petSpeech(scene) {
@@ -1617,15 +1617,16 @@ function petStoreView() {
   if (p.pet.speciesId) return petHomeView();
   const selectedId = PetSystem.petById(state.selectedPetId)?.id || SPIRITS[0].id;
   const selected = PetSystem.petById(selectedId);
+  const initialPetName = p.pet.needsBreedSelection ? p.pet.name : '';
   state.selectedPetId = selectedId;
   return shell(`<main class="list-page pet-store-page">
-    <div class="page-title"><span>🐾</span><div><p>选择学习伙伴</p><h1>8种宠物，只领取其中一只</h1></div></div>
+    <div class="page-title"><span>🐾</span><div><p>选择学习伙伴</p><h1>6种小狗，只领取其中一只</h1></div></div>
     <div class="permanent-choice-note"><b>领取免费，但选择是永久的</b><span>领取后可以随时免费改名，宠物品类不能更换。请先预览，再确认领取。</span></div>
     <div class="pet-catalog-grid">${SPIRITS.map(spirit => `<button type="button" class="pet-catalog-card ${spirit.id === selectedId ? 'selected' : ''}" data-action="select-pet" data-pet-id="${spirit.id}" aria-pressed="${spirit.id === selectedId}">
-      ${spiritFigure('catalog-spirit', spirit, 1)}<small>${esc(spirit.species)} · ${esc(spirit.personality)}</small><h2>${esc(spirit.name)}</h2><p>“${esc(spirit.slogan)}”</p><b>${spirit.id === selectedId ? '已选中，查看预览' : '选择预览'}</b>
+      ${spiritFigure('catalog-spirit', spirit, 1)}<small>${esc(spirit.species)} · ${esc(spirit.personality)}</small><h2>${esc(spirit.species)}</h2><p>期待和你一起学习、成长。</p><b>${spirit.id === selectedId ? '已选中，查看预览' : '选择预览'}</b>
     </button>`).join('')}</div>
-    <section class="pet-adopt-preview">${spiritFigure('adopt-preview-spirit', selected, 1)}<div><small>${esc(selected.species)} · ${esc(selected.personality)}</small><h2>领取${esc(selected.name)}</h2><p>${esc(selected.slogan)}</p>
-      <form id="pet-adopt-form"><input type="hidden" name="speciesId" value="${selected.id}"><label>给它取名字<input required maxlength="8" name="name" value="${esc(selected.name)}" pattern="[A-Za-z0-9一-龥]{1,8}" title="1至8个中文、英文或数字"></label><button class="primary" ${state.petBusy ? 'disabled' : ''}>${state.petBusy ? '正在领取…' : '确认领取这只宠物'}</button></form>
+    <section class="pet-adopt-preview">${spiritFigure('adopt-preview-spirit', selected, 1)}<div><small>${esc(selected.species)} · ${esc(selected.personality)}</small><h2>领取${esc(selected.species)}</h2><p>期待和你一起学习、成长。</p>
+      <form id="pet-adopt-form"><input type="hidden" name="speciesId" value="${selected.id}"><label>给它取名字<input required maxlength="8" name="name" value="${esc(initialPetName)}" pattern="[A-Za-z0-9一-龥]{1,8}" title="1至8个中文、英文或数字"></label><button class="primary" ${state.petBusy ? 'disabled' : ''}>${state.petBusy ? '正在领取…' : '确认领取这只宠物'}</button></form>
     </div></section>
   </main>`, 'pet');
 }

@@ -150,16 +150,16 @@ async function stopServer(child) {
     assert.strictEqual(tutorialComplete.body.user.progress.review.fallingTutorialDone, true);
 
     assert.strictEqual((await request('POST', '/api/pet/adopt', { speciesId: 'invalid', name: '坏坏' }, originalToken)).status, 400);
-    const adopted = await request('POST', '/api/pet/adopt', { speciesId: 'cloud', name: '团团' }, originalToken);
+    const adopted = await request('POST', '/api/pet/adopt', { speciesId: 'poodle', name: '团团' }, originalToken);
     assert.strictEqual(adopted.status, 200);
-    assert.strictEqual(adopted.body.user.progress.pet.speciesId, 'cloud');
+    assert.strictEqual(adopted.body.user.progress.pet.speciesId, 'poodle');
     assert.strictEqual(adopted.body.user.progress.pet.name, '团团');
-    const duplicateAdoption = await request('POST', '/api/pet/adopt', { speciesId: 'spark', name: '火火' }, originalToken);
+    const duplicateAdoption = await request('POST', '/api/pet/adopt', { speciesId: 'husky', name: '火火' }, originalToken);
     assert.strictEqual(duplicateAdoption.status, 409);
 
     const renamed = await request('PATCH', '/api/pet/name', { name: '云宝' }, originalToken);
     assert.strictEqual(renamed.status, 200);
-    assert.strictEqual(renamed.body.user.progress.pet.speciesId, 'cloud');
+    assert.strictEqual(renamed.body.user.progress.pet.speciesId, 'poodle');
     assert.strictEqual(renamed.body.user.progress.pet.name, '云宝');
     assert.strictEqual((await request('PATCH', '/api/pet/name', { name: '<script>' }, originalToken)).status, 400);
 

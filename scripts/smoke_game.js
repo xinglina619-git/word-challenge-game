@@ -60,25 +60,44 @@ vm.runInContext(fs.readFileSync(path.join(root, 'pet-system.js'), 'utf8'), conte
 vm.runInContext(fs.readFileSync(path.join(root, 'review-games.js'), 'utf8'), context, { filename: 'review-games.js' });
 const petSystem = context.PetSystem;
 const review = context.ReviewGames;
-if (Array.from(petSystem.PET_IDS).join(',') !== 'lingling,sprout,bubble,candy,spark,cloud,moon,rainbow') {
-  throw new Error('宠物品类目录不完整');
+if (Array.from(petSystem.PET_IDS).join(',') !== 'poodle,husky,tibetanMastiff,goldenRetriever,corgi,shibaInu') {
+  throw new Error('六犬种目录不完整');
 }
 for (const id of petSystem.PET_IDS) {
-  const pet = petSystem.petById(id);
-  if (!pet?.species || !pet?.personality || !pet?.asset || !pet?.slogan) throw new Error(`${id} 宠物资料不完整`);
+  const dog = petSystem.petById(id);
+  if (!dog?.species || !dog?.personality || !dog?.asset) throw new Error(`${id} 犬种资料不完整`);
+  if (Object.hasOwn(dog, 'name')) throw new Error(`${id} 不应提供系统默认宠物名`);
   for (const scene of petSystem.QUOTE_SCENES) {
-    if (!Array.isArray(pet.quotes?.[scene]) || pet.quotes[scene].length < 4) throw new Error(`${id}/${scene} 专属语录不足`);
+    if (!Array.isArray(dog.quotes?.[scene]) || dog.quotes[scene].length < 4) throw new Error(`${id}/${scene} 语录不足`);
   }
 }
 if (petSystem.petLevelForGrowth(0) !== 1 || petSystem.petLevelForGrowth(60) !== 2 || petSystem.petLevelForGrowth(2399) !== 9 || petSystem.petLevelForGrowth(2400) !== 10) {
   throw new Error('宠物成长等级门槛不正确');
 }
+if (petSystem.TRICKS.length !== 9 || petSystem.TRICKS.map(item => item.level).join(',') !== '2,3,4,5,6,7,8,9,10') {
+  throw new Error('Lv.2 至 Lv.10 特技映射不完整');
+}
+if (petSystem.nextTrickForLevel(4)?.name !== '握手' || petSystem.unlockedTricks(5).at(-1)?.name !== '握手') {
+  throw new Error('下一特技或已解锁特技计算错误');
+}
+if (petSystem.growthRemaining(250) !== 30 || petSystem.growthRemaining(2400) !== 0) {
+  throw new Error('距离升级成长值计算错误');
+}
+const unlocked = petSystem.tricksUnlockedBetween(3, 6).map(item => item.name).join(',');
+if (unlocked !== '转圈圈,握手,打滚') throw new Error('跨级特技解锁计算错误');
+const pendingLegacy = petSystem.normalizePetState({
+  speciesId: 'cloud', name: '小云', adoptedAt: '2026-08-24T00:00:00.000Z', growth: 70,
+  foodInventory: { starBiscuit: 2 }
+});
+if (!pendingLegacy.needsBreedSelection || pendingLegacy.speciesId || pendingLegacy.name !== '小云' || pendingLegacy.growth !== 70 || pendingLegacy.foodInventory.starBiscuit !== 2) {
+  throw new Error('旧宠物规范化丢失养成数据');
+}
 if (JSON.stringify(Array.from(petSystem.FOODS, item => [item.price, item.growth])) !== JSON.stringify([[20, 10], [50, 30], [100, 70], [180, 140]])) {
   throw new Error('食物价格或成长值不正确');
 }
-const firstPetQuote = petSystem.quoteFor('cloud', 'retry', '', () => 0);
-const secondPetQuote = petSystem.quoteFor('cloud', 'retry', firstPetQuote, () => 0);
-if (!firstPetQuote || firstPetQuote === secondPetQuote) throw new Error('宠物语录没有避免连续重复');
+const firstHunger = petSystem.quoteFor('corgi', 'hunger', '', () => 0);
+const secondHunger = petSystem.quoteFor('corgi', 'hunger', firstHunger, () => 0);
+if (!firstHunger || firstHunger === secondHunger) throw new Error('每日提醒语录没有避免连续重复');
 if (review.SPECIAL_RATE !== .08 || review.MIN_LEARNED_WORDS !== 12) throw new Error('特殊复习关频率或最低词数不正确');
 if ([1, 2, 3, 4, 5].map(review.fallDurationForGrade).join(',') !== '7000,7000,6000,6000,5000') throw new Error('落体关年级时限不正确');
 if ([0, 1, 2].map(review.starsForSpelling).join(',') !== '3,2,1') throw new Error('拼写关星级规则不正确');
@@ -304,10 +323,10 @@ test.gameState.user = {
 const unclaimedHome = test.homeView();
 if (!unclaimedHome.includes('领取我的学习伙伴') || !unclaimedHome.includes('每个账号只能选择一只')) throw new Error('未领取宠物的首页引导不完整');
 const petStore = test.petStoreView();
-if ((petStore.match(/class="pet-catalog-card/g) || []).length !== 8) throw new Error('宠物商店没有展示8种可选宠物');
+if ((petStore.match(/class="pet-catalog-card/g) || []).length !== 6) throw new Error('宠物商店没有展示6种可选宠物');
 if (!petStore.includes('领取后可以随时免费改名') || !petStore.includes('宠物品类不能更换')) throw new Error('宠物永久选择提示不明确');
 test.gameState.user.progress.pet = {
-  speciesId: 'cloud', name: '小云', adoptedAt: '2026-08-24T00:00:00.000Z', growth: 70,
+  speciesId: 'corgi', name: '小云', adoptedAt: '2026-08-24T00:00:00.000Z', growth: 70,
   foodInventory: { starBiscuit: 2, fruitCup: 0, nutritionMeal: 0, celebrationCake: 0 }
 };
 const home = test.homeView();
