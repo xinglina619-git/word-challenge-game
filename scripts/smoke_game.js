@@ -276,6 +276,7 @@ globalThis.__gameTest = {
   trickBookView: typeof trickBookView === 'function' ? trickBookView : null,
   openPetHome: typeof openPetHome === 'function' ? openPetHome : null,
   adoptPet: typeof adoptPet === 'function' ? adoptPet : null,
+  renamePet: typeof renamePet === 'function' ? renamePet : null,
   feedPet: typeof feedPet === 'function' ? feedPet : null,
   shopView: typeof shopView === 'function' ? shopView : null,
   petSpeech: typeof petSpeech === 'function' ? petSpeech : null,
@@ -459,6 +460,7 @@ test.gameState.user.progress.pet = petSystem.normalizePetState({
   speciesId: 'cloud', name: '小云', adoptedAt: '2026-08-24T00:00:00.000Z', growth: 70,
   foodInventory: { starBiscuit: 2 }, needsBreedSelection: true
 });
+test.gameState.petNameDraft = null;
 const migrationStore = test.petStoreView();
 if (!migrationStore.includes('保留原有等级、成长值、金币和食物') || !migrationStore.includes('value="小云"')) {
   throw new Error('旧用户重选提示或旧名字预填缺失');
@@ -793,6 +795,12 @@ async function runAsyncRegressionTests() {
   }
 
   const jsonResponse = data => ({ ok: true, json: async () => data });
+  const deferred = () => {
+    let resolve;
+    let reject;
+    const promise = new Promise((onResolve, onReject) => { resolve = onResolve; reject = onReject; });
+    return { promise, resolve, reject };
+  };
   const actionEvent = (action, dataset = {}) => {
     const actionNode = { dataset: { action, ...dataset } };
     return {
@@ -800,6 +808,7 @@ async function runAsyncRegressionTests() {
         closest: selector => {
           if (selector === '[data-action]') return actionNode;
           if (selector === '[data-trick-id]' && dataset.trickId) return actionNode;
+          if (selector === '[data-pet-id]' && dataset.petId) return actionNode;
           return null;
         }
       }
@@ -811,6 +820,52 @@ async function runAsyncRegressionTests() {
     profile: { nickname: '小测试员' },
     progress: { stage: 1, coins: 30, pet: petSystem.normalizePetState({}) }
   };
+  test.gameState.selectedPetId = '';
+  test.gameState.petNameDraft = null;
+  test.gameState.view = 'pet-store';
+  test.petStoreView();
+  await dispatchDocumentEvent('input', {
+    target: {
+      value: '自选名',
+      matches: selector => selector === '#pet-adopt-form input[name="name"]'
+    }
+  });
+  await dispatchDocumentEvent('click', actionEvent('select-pet', { petId: 'husky' }));
+  if (test.gameState.petNameDraft !== '自选名' || test.gameState.selectedPetId !== 'husky' || !appElement.innerHTML.includes('value="自选名"')) {
+    throw new Error(`切换犬种后没有保留名字草稿 draft=${test.gameState.petNameDraft} selected=${test.gameState.selectedPetId} rendered=${appElement.innerHTML.includes('value="自选名"')}`);
+  }
+  const failedAdopt = deferred();
+  fetchHandler = async url => {
+    if (url === '/api/pet/adopt') return failedAdopt.promise;
+    throw new Error(`非预期请求：${url}`);
+  };
+  const pendingFailedAdopt = test.adoptPet('husky', '自选名');
+  await Promise.resolve();
+  if (!test.gameState.petBusy || !appElement.innerHTML.includes('value="自选名"')) throw new Error('领取忙碌重渲染丢失名字草稿');
+  failedAdopt.reject(new Error('领取失败'));
+  await pendingFailedAdopt;
+  if (test.gameState.petBusy || !test.petStoreView().includes('value="自选名"')) throw new Error('领取失败后忙碌态或名字草稿没有恢复');
+
+  test.gameState.user.progress.pet = petSystem.normalizePetState({
+    speciesId: 'cloud', name: '旧名字', adoptedAt: '2026-08-24T00:00:00.000Z', growth: 70,
+    catalogVersion: 1, needsBreedSelection: true
+  });
+  test.gameState.petNameDraft = null;
+  test.petStoreView();
+  await dispatchDocumentEvent('input', {
+    target: {
+      value: '迁移新名',
+      matches: selector => selector === '#pet-adopt-form input[name="name"]'
+    }
+  });
+  await dispatchDocumentEvent('click', actionEvent('select-pet', { petId: 'poodle' }));
+  if (!test.petStoreView().includes('value="迁移新名"') || test.petStoreView().includes('value="旧名字"')) {
+    throw new Error('旧用户修改后的名字草稿回退成旧名');
+  }
+
+  test.gameState.user.progress.pet = petSystem.normalizePetState({});
+  test.gameState.selectedPetId = '';
+  test.gameState.petNameDraft = null;
   fetchHandler = async (url, options) => {
     petApiCalls.push({ url, options });
     throw new Error('空名字不应发送领取请求');
@@ -841,7 +896,65 @@ async function runAsyncRegressionTests() {
     throw new Error('领取确认或欢迎气泡不正确');
   }
 
+  const delayedAdopt = deferred();
+  test.gameState.user = {
+    profile: { nickname: '旧账号' },
+    progress: { stage: 1, coins: 30, pet: petSystem.normalizePetState({}) }
+  };
+  test.gameState.token = 'old-account-token';
+  test.gameState.view = 'pet-store';
+  test.gameState.selectedPetId = 'husky';
+  test.gameState.petNameDraft = '旧账号草稿';
+  fetchHandler = async url => {
+    if (url === '/api/pet/adopt') return delayedAdopt.promise;
+    if (url === '/api/logout') return jsonResponse({ ok: true });
+    throw new Error(`非预期请求：${url}`);
+  };
+  const pendingStaleAdopt = test.adoptPet('corgi', '旧号小狗');
+  await Promise.resolve();
+  if (!test.gameState.petBusy) throw new Error('延迟领取夹具没有进入领取忙碌态');
+  await dispatchDocumentEvent('click', actionEvent('logout'));
+  if (test.gameState.user || test.gameState.view !== 'login') throw new Error('退出账号夹具没有先清空当前会话');
+  if (test.gameState.selectedPetId || test.gameState.petNameDraft !== null) throw new Error('退出账号没有清理犬种选择或名字草稿');
+  delayedAdopt.resolve(jsonResponse({ user: adoptedUser }));
+  await pendingStaleAdopt;
+  if (test.gameState.user || test.gameState.view !== 'login' || test.gameState.lastPetQuote) {
+    throw new Error('退出后晚到的领取响应恢复了旧账号或宠物屋');
+  }
+  const delayedAdoptFailure = deferred();
+  test.gameState.user = {
+    profile: { nickname: '另一个旧账号' },
+    progress: { stage: 1, coins: 0, pet: petSystem.normalizePetState({}) }
+  };
+  test.gameState.token = 'another-old-token';
+  test.gameState.view = 'pet-store';
+  test.gameState.notice = '';
+  fetchHandler = async url => {
+    if (url === '/api/pet/adopt') return delayedAdoptFailure.promise;
+    if (url === '/api/logout') return jsonResponse({ ok: true });
+    throw new Error(`非预期请求：${url}`);
+  };
+  const pendingStaleFailure = test.adoptPet('poodle', '旧请求');
+  await Promise.resolve();
+  await dispatchDocumentEvent('click', actionEvent('logout'));
+  delayedAdoptFailure.reject(new Error('旧领取请求失败'));
+  await pendingStaleFailure;
+  if (test.gameState.notice || test.gameState.user || test.gameState.view !== 'login') throw new Error('退出后晚到的领取失败仍污染当前界面');
+
+  test.gameState.user = {
+    profile: { nickname: '新账号' },
+    progress: { stage: 1, coins: 0, pet: petSystem.normalizePetState({}) }
+  };
+  test.gameState.token = 'new-account-token';
+  test.gameState.view = 'pet-store';
+  const newAccountStore = test.petStoreView();
+  if (test.gameState.selectedPetId !== 'poodle' || !newAccountStore.includes('value=""') || !newAccountStore.includes('data-pet-id="poodle" aria-pressed="true"')) {
+    throw new Error('新账号领取页没有恢复默认犬种和空名字');
+  }
+
   let visitCount = 0;
+  test.gameState.user = adoptedUser;
+  test.gameState.token = 'test-token';
   fetchHandler = async url => {
     if (url !== '/api/pet/visit') throw new Error(`非预期请求：${url}`);
     visitCount += 1;
@@ -853,6 +966,27 @@ async function runAsyncRegressionTests() {
   }
   await test.openPetHome();
   if (visitCount !== 2 || test.gameState.lastPetQuote) throw new Error('同日再次进入宠物屋仍重复显示饥饿气泡');
+
+  const delayedVisit = deferred();
+  let writesDuringVisit = 0;
+  test.gameState.user = adoptedUser;
+  fetchHandler = async url => {
+    if (url === '/api/pet/visit') return delayedVisit.promise;
+    if (url === '/api/pet/feed' || url === '/api/pet/name') {
+      writesDuringVisit += 1;
+      return jsonResponse({ user: adoptedUser, feeding: { oldLevel: 1, newLevel: 1, growthRemaining: 50, unlockedTrickIds: [] } });
+    }
+    throw new Error(`非预期请求：${url}`);
+  };
+  const pendingVisit = test.openPetHome();
+  await Promise.resolve();
+  if (!test.gameState.petVisitBusy) throw new Error('延迟访问夹具没有进入访问忙碌态');
+  await test.feedPet('starBiscuit');
+  await test.renamePet('豆豆新名');
+  if (writesDuringVisit !== 0) throw new Error('访问加载期间仍发起了喂食或改名写请求');
+  delayedVisit.resolve(jsonResponse({ user: adoptedUser, petVisit: { showHungerPrompt: false } }));
+  await pendingVisit;
+  if (test.gameState.petVisitBusy || test.gameState.petBusy) throw new Error('访问完成后忙碌态没有恢复');
 
   const fedUser = {
     ...adoptedUser,

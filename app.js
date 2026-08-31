@@ -125,6 +125,7 @@ const state = {
   petBusy: false,
   petVisitBusy: false,
   selectedPetId: '',
+  petNameDraft: null,
   lastPetQuote: '',
   showTrickBook: false,
   activeTrickId: '',
@@ -442,6 +443,18 @@ function petSpeech(scene) {
   return quote;
 }
 let petVisitRequestId = 0;
+let petSessionGeneration = 0;
+function petRequestContext() {
+  return { generation: petSessionGeneration, token: state.token };
+}
+function petRequestIsCurrent(context) {
+  return context.generation === petSessionGeneration && context.token === state.token;
+}
+function invalidatePetRequests() {
+  petSessionGeneration += 1;
+  state.petBusy = false;
+  state.petVisitBusy = false;
+}
 function resetPetHomeInteraction(cancelVisit = true) {
   if (state.trickTimer) clearTimeout(state.trickTimer);
   state.trickTimer = null;
@@ -451,6 +464,13 @@ function resetPetHomeInteraction(cancelVisit = true) {
     petVisitRequestId += 1;
     state.petVisitBusy = false;
   }
+}
+function resetPetAccountState() {
+  invalidatePetRequests();
+  resetPetHomeInteraction();
+  state.selectedPetId = '';
+  state.petNameDraft = null;
+  state.lastPetQuote = '';
 }
 function petGrowthPercent(pet) {
   if (pet.level >= 10) return 100;
@@ -1629,7 +1649,8 @@ function petStoreView() {
   if (p.pet.speciesId && !p.pet.needsBreedSelection) return petHomeView();
   const selectedId = PetSystem.petById(state.selectedPetId)?.id || PetSystem.PETS[0].id;
   const selected = PetSystem.petById(selectedId);
-  const initialPetName = p.pet.needsBreedSelection ? p.pet.name : '';
+  if (state.petNameDraft === null) state.petNameDraft = p.pet.needsBreedSelection ? p.pet.name : '';
+  const initialPetName = state.petNameDraft;
   state.selectedPetId = selectedId;
   return shell(`<main class="list-page pet-store-page">
     <div class="page-title"><span>🐾</span><div><p>选择学习伙伴</p><h1>6种小狗，只领取其中一只</h1></div></div>
@@ -1684,8 +1705,8 @@ function petHomeView() {
     </section>
     ${petOnboardingCard(p)}
     ${state.showTrickBook ? trickBookView(p) : ''}
-    <section class="pet-home-section"><h2>喂养背包</h2><p>食物由学习获得的金币兑换。宠物不会饥饿、生病或退级。</p><div class="food-shop-grid">${PetSystem.FOODS.map(food => `<article class="food-card ${food.price >= 100 ? 'premium' : ''}"><div>${food.icon}</div><h3>${food.name}</h3><p>成长值 +${food.growth}</p><small>库存 ${p.pet.foodInventory[food.id]}</small>${p.pet.level >= 10 ? '<button data-action="pet-tap">已经满级，摸摸它吧</button>' : `<button data-action="feed-pet" data-food-id="${food.id}" ${state.petBusy || p.pet.foodInventory[food.id] <= 0 ? 'disabled' : ''}>喂给小狗</button>`}</article>`).join('')}</div></section>
-    <section class="pet-home-section pet-rename-card"><h2>免费改名</h2><form id="pet-rename-form"><input required maxlength="8" name="name" value="${esc(p.pet.name)}" pattern="[A-Za-z0-9一-龥]{1,8}" title="1至8个中文、英文或数字"><button ${state.petBusy ? 'disabled' : ''}>保存名字</button></form><small>名字可以随时修改；已经领取的${esc(dog.species)}不会改变。</small></section>
+    <section class="pet-home-section"><h2>喂养背包</h2><p>食物由学习获得的金币兑换。宠物不会饥饿、生病或退级。</p><div class="food-shop-grid">${PetSystem.FOODS.map(food => `<article class="food-card ${food.price >= 100 ? 'premium' : ''}"><div>${food.icon}</div><h3>${food.name}</h3><p>成长值 +${food.growth}</p><small>库存 ${p.pet.foodInventory[food.id]}</small>${p.pet.level >= 10 ? '<button data-action="pet-tap">已经满级，摸摸它吧</button>' : `<button data-action="feed-pet" data-food-id="${food.id}" ${state.petBusy || state.petVisitBusy || p.pet.foodInventory[food.id] <= 0 ? 'disabled' : ''}>喂给小狗</button>`}</article>`).join('')}</div></section>
+    <section class="pet-home-section pet-rename-card"><h2>免费改名</h2><form id="pet-rename-form"><input required maxlength="8" name="name" value="${esc(p.pet.name)}" pattern="[A-Za-z0-9一-龥]{1,8}" title="1至8个中文、英文或数字"><button ${state.petBusy || state.petVisitBusy ? 'disabled' : ''}>保存名字</button></form><small>名字可以随时修改；已经领取的${esc(dog.species)}不会改变。</small></section>
     <button class="primary" data-action="shop">去商店兑换食物</button>
   </main>`, 'pet');
 }
@@ -1765,22 +1786,32 @@ function operationId(prefix) {
   return `${prefix}-${random}`;
 }
 async function adoptPet(speciesId, name) {
+  state.petNameDraft = String(name || '');
   const pet = PetSystem.petById(speciesId);
   if (!pet || !PetSystem.validPetName(name)) return toast('请选择宠物，并填写1至8个中文、英文或数字作为名字');
   if (state.petBusy) return;
   if (!globalThis.confirm(`确认选择“${pet.species}”并命名为“${name}”吗？选择后犬种不能再次更换，名字仍可免费修改。`)) return;
+  const requestContext = petRequestContext();
   state.petBusy = true;
   render();
   try {
     const data = await api('/api/pet/adopt', { method: 'POST', body: JSON.stringify({ speciesId, name }) });
+    if (!petRequestIsCurrent(requestContext)) return;
     state.user = data.user;
     resetPetHomeInteraction();
     state.lastPetQuote = petSpeech('welcome');
     state.view = 'pet-home';
     soundSpecial('burst', 7);
     toast(`${name}已经成为你的专属学习伙伴！`);
-  } catch (error) { toast(error.message); }
-  finally { state.petBusy = false; render(); }
+  } catch (error) {
+    if (petRequestIsCurrent(requestContext)) toast(error.message);
+  }
+  finally {
+    if (petRequestIsCurrent(requestContext)) {
+      state.petBusy = false;
+      render();
+    }
+  }
 }
 async function openPetHome() {
   const pet = normalizedProgress().pet;
@@ -1793,50 +1824,72 @@ async function openPetHome() {
   if (state.petVisitBusy) return;
   resetPetHomeInteraction();
   const requestId = ++petVisitRequestId;
+  const requestContext = petRequestContext();
   state.view = 'pet-home';
   state.lastPetQuote = '';
   state.petVisitBusy = true;
   render();
   try {
     const data = await api('/api/pet/visit', { method: 'POST', body: '{}' });
-    if (requestId !== petVisitRequestId) return;
+    if (requestId !== petVisitRequestId || !petRequestIsCurrent(requestContext)) return;
     state.user = data.user;
     if (data.petVisit?.showHungerPrompt) state.lastPetQuote = petSpeech('hunger');
   } catch {
-    if (requestId === petVisitRequestId) toast('宠物屋已经打开，今日提醒暂时没有同步');
+    if (requestId === petVisitRequestId && petRequestIsCurrent(requestContext)) toast('宠物屋已经打开，今日提醒暂时没有同步');
   } finally {
-    if (requestId === petVisitRequestId) {
+    if (requestId === petVisitRequestId && petRequestIsCurrent(requestContext)) {
       state.petVisitBusy = false;
       render();
     }
   }
 }
 async function renamePet(name) {
+  if (state.petBusy || state.petVisitBusy) return;
   if (!PetSystem.validPetName(name)) return toast('宠物名字需为1至8个中文、英文或数字');
+  const requestContext = petRequestContext();
   state.petBusy = true;
   render();
   try {
     const data = await api('/api/pet/name', { method: 'PATCH', body: JSON.stringify({ name }) });
+    if (!petRequestIsCurrent(requestContext)) return;
     state.user = data.user;
     state.lastPetQuote = petSpeech('tap');
     toast('新名字保存好了');
-  } catch (error) { toast(error.message); }
-  finally { state.petBusy = false; render(); }
+  } catch (error) {
+    if (petRequestIsCurrent(requestContext)) toast(error.message);
+  }
+  finally {
+    if (petRequestIsCurrent(requestContext)) {
+      state.petBusy = false;
+      render();
+    }
+  }
 }
 async function buyShopItem(itemId) {
+  if (state.petBusy) return;
+  const requestContext = petRequestContext();
   state.petBusy = true;
   render();
   try {
     const data = await api('/api/shop/purchase', { method: 'POST', body: JSON.stringify({ itemId, operationId: operationId('buy') }) });
+    if (!petRequestIsCurrent(requestContext)) return;
     state.user = data.user;
     soundCoinBurst();
     toast('兑换成功，已经放进背包');
-  } catch (error) { toast(error.message); }
-  finally { state.petBusy = false; render(); }
+  } catch (error) {
+    if (petRequestIsCurrent(requestContext)) toast(error.message);
+  }
+  finally {
+    if (petRequestIsCurrent(requestContext)) {
+      state.petBusy = false;
+      render();
+    }
+  }
 }
 async function feedPet(foodId) {
   const food = PetSystem.foodById(foodId);
   if (!food) return;
+  if (state.petBusy || state.petVisitBusy) return;
   const currentPet = normalizedProgress().pet;
   if (currentPet.level >= 10) {
     state.lastPetQuote = petSpeech('maxLevel');
@@ -1844,11 +1897,12 @@ async function feedPet(foodId) {
     render();
     return;
   }
-  if (state.petBusy) return;
+  const requestContext = petRequestContext();
   state.petBusy = true;
   render();
   try {
     const data = await api('/api/pet/feed', { method: 'POST', body: JSON.stringify({ foodId, operationId: operationId('feed') }) });
+    if (!petRequestIsCurrent(requestContext)) return;
     state.user = data.user;
     const scene = data.feeding?.unlockedTrickIds?.length ? 'levelUp' : food.quoteScene;
     const emotion = petSpeech(scene);
@@ -1857,8 +1911,15 @@ async function feedPet(foodId) {
     if (food.price >= 100) soundSpecial('burst', 8);
     else soundPop(5);
     toast(data.feeding?.newLevel > data.feeding?.oldLevel ? `${normalizedProgress().pet.name}升级啦！` : `成长值 +${food.growth}`);
-  } catch (error) { toast(error.message); }
-  finally { state.petBusy = false; render(); }
+  } catch (error) {
+    if (petRequestIsCurrent(requestContext)) toast(error.message);
+  }
+  finally {
+    if (petRequestIsCurrent(requestContext)) {
+      state.petBusy = false;
+      render();
+    }
+  }
 }
 async function loadUser() {
   if (!state.token) {
@@ -1868,6 +1929,7 @@ async function loadUser() {
   }
   try {
     const data = await api('/api/me');
+    resetPetAccountState();
     state.user = data.user;
     normalizedProgress();
     state.view = 'home';
@@ -1985,10 +2047,10 @@ document.addEventListener('click', async event => {
     else startLevel(state.result.level + 1);
   }
   if (action === 'logout') {
-    try { await api('/api/logout', { method: 'POST' }); } catch {}
+    const logoutRequest = api('/api/logout', { method: 'POST' });
     cancelSpeech();
     clearFallingTimer();
-    resetPetHomeInteraction();
+    resetPetAccountState();
     stopMusic(true);
     state.token = null;
     state.user = null;
@@ -1996,7 +2058,11 @@ document.addEventListener('click', async event => {
     localStorage.removeItem('general_token');
     state.view = 'login';
     render();
+    try { await logoutRequest; } catch {}
   }
+});
+document.addEventListener('input', event => {
+  if (event.target.matches?.('#pet-adopt-form input[name="name"]')) state.petNameDraft = event.target.value;
 });
 document.addEventListener('submit', async event => {
   if (event.target.id === 'auth-form') {
@@ -2015,6 +2081,7 @@ document.addEventListener('submit', async event => {
         applyRegistrationSuccess(data);
         return;
       }
+      resetPetAccountState();
       state.token = data.token;
       localStorage.setItem('word_spirit_token', data.token);
       state.user = data.user;
@@ -2038,6 +2105,7 @@ document.addEventListener('submit', async event => {
     render();
     try {
       const data = await api('/api/password/reset-local', { method: 'POST', body: JSON.stringify(payload) });
+      resetPetAccountState();
       state.token = data.token;
       localStorage.setItem('word_spirit_token', data.token);
       state.user = data.user;
