@@ -346,7 +346,13 @@ test.gameState.game = null;
 if (source.includes('function drawView(') || source.includes('function collectionView(') || source.includes('免费成长抽卡') || source.includes('词灵图鉴')) {
   throw new Error('旧抽卡或多词灵图鉴仍在界面代码中');
 }
-for (const selector of ['.pet-speech-bubble', '.pet-growth-bar', '.food-shop-grid', '.pet-catalog-grid']) {
+for (const selector of [
+  '.dog-figure', '.pose-paw', '.pose-walk', '.pose-sleep', '.dog-speech-bubble',
+  '.pet-attention-dot', '.pet-onboarding-card', '.trick-book', '.trick-card',
+  '.trick-wag', '.trick-bounce', '.trick-spin', '.trick-paw', '.trick-roll',
+  '.trick-chase', '.trick-dance', '.trick-walk', '.trick-sleep',
+  '@media (prefers-reduced-motion: reduce)'
+]) {
   if (!stylesSource.includes(selector)) throw new Error(`宠物界面样式缺失：${selector}`);
 }
 if (!test.faceChoicesForWord || Array.from(test.faceChoicesForWord({ word: 'apple', zh: '苹果' })).join(',') !== 'en,zh') {
