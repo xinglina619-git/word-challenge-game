@@ -1,4 +1,5 @@
 const fs = require('fs');
+const assert = require('assert');
 const path = require('path');
 const vm = require('vm');
 const zlib = require('zlib');
@@ -355,6 +356,21 @@ for (const selector of [
 ]) {
   if (!stylesSource.includes(selector)) throw new Error(`宠物界面样式缺失：${selector}`);
 }
+const mobileDogStyles = stylesSource.match(/@media\(max-width:680px\)\{([^}]*(?:\}[^@]*)?)@media \(prefers-reduced-motion: reduce\)/)?.[1];
+if (!mobileDogStyles) throw new Error('缺少小狗窄屏样式范围');
+const mobileDogSizes = Object.fromEntries(
+  [...mobileDogStyles.matchAll(/(\.dog-figure(?:\.[\w-]+)?)\{--dog-size:(\d+)px\}/g)].map(([, selector, size]) => [selector, size])
+);
+assert.deepStrictEqual(mobileDogSizes, {
+  '.dog-figure': '190',
+  '.dog-figure.catalog-dog': '118',
+  '.dog-figure.adopt-preview-dog': '180'
+}, '窄屏小狗尺寸必须由通用尺寸和明确组件变体共同定义');
+assert(
+  mobileDogStyles.indexOf('.dog-figure.catalog-dog{--dog-size:118px}') > mobileDogStyles.indexOf('.dog-figure{--dog-size:190px}')
+  && mobileDogStyles.indexOf('.dog-figure.adopt-preview-dog{--dog-size:180px}') > mobileDogStyles.indexOf('.dog-figure{--dog-size:190px}'),
+  '窄屏组件变体必须在通用小狗尺寸之后层叠，避免被 190px 覆盖'
+);
 if (!test.faceChoicesForWord || Array.from(test.faceChoicesForWord({ word: 'apple', zh: '苹果' })).join(',') !== 'en,zh') {
   throw new Error('三消展示面选择仍包含图片');
 }
