@@ -398,6 +398,9 @@ test.gameState.user = null;
 test.gameState.view = 'register';
 test.gameState.auth = { busy: true, error: '', success: '', phone: '', passwordVisible: false };
 authHtml = test.authView();
+if (authHtml.includes('/assets/word-spirit.png') || authHtml.includes('mascot-figure')) {
+  throw new Error('注册页不应渲染词灵图片');
+}
 if (!authHtml.includes('正在注册…') || !/type="submit"[^>]*disabled/.test(authHtml)) throw new Error('注册忙碌状态未禁用提交');
 
 test.applyRegistrationSuccess({
