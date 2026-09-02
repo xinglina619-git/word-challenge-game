@@ -196,8 +196,10 @@ const recorded = review.recordLearnedWord([], 'Apple', '苹果', 'correct', '202
 if (recorded.length !== 1 || recorded[0].word !== 'apple' || recorded[0].encounters !== 1) throw new Error('已学词记录没有正确规范化');
 if (review.selectReviewWords(learnedForReview, 5, () => .5).length !== 5) throw new Error('特殊关选题数量不正确');
 const indexSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+if (!indexSource.includes('/styles.css?v=24')) throw new Error('首页没有加载最新宠物屋样式版本');
 if (!indexSource.includes('/review-games.js?v=2')) throw new Error('首页没有在 app.js 前加载复习关规则');
-if (!indexSource.includes('/pet-system.js?v=2')) throw new Error('首页没有在 app.js 前加载宠物规则');
+if (!indexSource.includes('/pet-system.js?v=3')) throw new Error('首页没有在 app.js 前加载最新宠物规则');
+if (!indexSource.includes('/app.js?v=23')) throw new Error('首页没有加载最新宠物屋交互版本');
 const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 if (!serverSource.includes("url.pathname === '/pet-system.js'")) throw new Error('本地服务没有提供宠物规则脚本');
 if (!serverSource.includes("url.pathname === '/review-games.js'")) throw new Error('本地服务没有提供复习关规则脚本');
@@ -378,6 +380,9 @@ if (!test.authView || !test.resetPasswordView) throw new Error('登录与密码�
 if (test.gameState.view !== 'login') throw new Error('无有效令牌时应默认显示登录页');
 test.gameState.view = 'login';
 let authHtml = test.authView();
+if (authHtml.includes('/assets/word-spirit.png') || authHtml.includes('mascot-figure')) {
+  throw new Error('登录页不应渲染词灵图片');
+}
 if (!authHtml.includes('autocomplete="current-password"')) throw new Error('登录密码缺少自动填充语义');
 if (!authHtml.includes('data-action="toggle-password"')) throw new Error('登录页缺少密码显示开关');
 if (!authHtml.includes('data-action="forgot-password"')) throw new Error('登录页缺少密码恢复入口');
@@ -415,6 +420,9 @@ authHtml = test.authView();
 if (!authHtml.includes('role="alert" tabindex="-1"')) throw new Error('认证错误缺少可聚焦 alert 语义');
 if (!test.resetPasswordView().includes('autocomplete="new-password"')) throw new Error('新密码缺少自动填充语义');
 if (!test.resetPasswordView().includes('id="reset-password-form"')) throw new Error('密码恢复表单缺失');
+if (test.resetPasswordView().includes('/assets/word-spirit.png') || test.resetPasswordView().includes('mascot-figure')) {
+  throw new Error('找回密码页不应渲染词灵图片');
+}
 if (!test.readAudioSettings || !test.audioIcon || !test.audioSettingsPanel) throw new Error('声音设置接口不完整');
 const audioSettings = test.readAudioSettings({
   getItem: key => ({ word_spirit_music: 'off', word_spirit_effects: 'on', word_spirit_speech: 'off' })[key]
@@ -486,6 +494,10 @@ test.gameState.petNameDraft = null;
 const migrationStore = test.petStoreView();
 if (!migrationStore.includes('保留原有等级、成长值、金币和食物') || !migrationStore.includes('value="小云"')) {
   throw new Error('旧用户重选提示或旧名字预填缺失');
+}
+const migrationHome = test.homeView();
+if (!migrationHome.includes('重新选择并保留养成进度') || migrationHome.includes('领取我的小狗')) {
+  throw new Error('旧用户首页没有明确引导无损重选小狗');
 }
 
 test.gameState.user.progress.pet = petSystem.normalizePetState({

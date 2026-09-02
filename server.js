@@ -498,6 +498,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/pet-system.js') return serveFile(res, path.join(ROOT, 'pet-system.js'));
     if (req.method === 'GET' && url.pathname === '/review-games.js') return serveFile(res, path.join(ROOT, 'review-games.js'));
     if (req.method === 'GET' && url.pathname === '/styles.css') return serveFile(res, path.join(ROOT, 'styles.css'));
+    const dogAsset = PetSystem.PETS.find(dog => dog.asset === url.pathname);
+    if (req.method === 'GET' && dogAsset) return serveFile(res, path.join(ROOT, dogAsset.asset.slice(1)));
     if (req.method === 'GET' && url.pathname === '/assets/snake-countdown-bgm.mp3') return serveFile(res, path.join(ROOT, 'assets', 'snake-countdown-bgm.mp3'));
     if (req.method === 'GET' && url.pathname === '/assets/word-spirit.png') return serveFile(res, path.join(ROOT, 'assets', 'word-spirit.png'));
     if (req.method === 'GET' && url.pathname === '/assets/alphabet-jungle.png') return serveFile(res, path.join(ROOT, 'assets', 'alphabet-jungle.png'));

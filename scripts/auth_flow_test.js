@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { SessionStore, isLoopbackAddress } = require('../session-store');
+const PetSystem = require('../pet-system');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'word-spirit-auth-'));
 const sessionFile = path.join(tempDir, 'sessions.json');
@@ -102,6 +103,12 @@ async function stopServer(child) {
     assert.strictEqual(backgroundMusic.status, 200, '背景音乐资源必须可通过静态服务访问');
     assert(backgroundMusic.raw.length > 0, '背景音乐响应不能为空');
     assert(/^audio\/(?:mpeg|mp3)(?:;|$)/i.test(String(backgroundMusic.headers['content-type'] || '')), '背景音乐必须返回音频 Content-Type');
+    for (const dog of PetSystem.PETS) {
+      const dogAsset = await request('GET', dog.asset);
+      assert.strictEqual(dogAsset.status, 200, `${dog.species}姿态图必须可通过静态服务访问`);
+      assert(dogAsset.raw.length > 0, `${dog.species}姿态图响应不能为空`);
+      assert(/^image\/png(?:;|$)/i.test(String(dogAsset.headers['content-type'] || '')), `${dog.species}姿态图必须返回 PNG Content-Type`);
+    }
     const reviewRulesAsset = await request('GET', '/review-games.js');
     assert.strictEqual(reviewRulesAsset.status, 200, '复习关规则必须可通过静态服务访问');
     assert(reviewRulesAsset.raw.includes('SPECIAL_RATE'), '复习关规则脚本响应不完整');

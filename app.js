@@ -1447,7 +1447,6 @@ function authView() {
   const login = state.view === 'login';
   const mode = login ? 'login' : 'register';
   return `<main class="auth-page"><section class="auth-card">
-    ${mascotFigure('auth-spirit')}
     <p>英语单词消消乐</p><h1>单词消消养宠记</h1><small>学习赚金币，回宠物屋照顾小狗。</small>
     <div class="auth-tabs" role="tablist"><button class="${login ? 'active' : ''}" data-action="switch-login" type="button" role="tab" aria-selected="${login}" ${state.auth.busy ? 'disabled' : ''}>登录</button><button class="${!login ? 'active' : ''}" data-action="switch-register" type="button" role="tab" aria-selected="${!login}" ${state.auth.busy ? 'disabled' : ''}>注册</button></div>
     <form id="auth-form" aria-busy="${state.auth.busy}">
@@ -1481,7 +1480,6 @@ function applyRegistrationSuccess(data) {
 }
 function resetPasswordView() {
   return `<main class="auth-page"><section class="auth-card compact-auth">
-    ${mascotFigure('auth-spirit')}
     <p>家长帮助</p><h1>重新设置密码</h1><small>为了保护家庭账号，只能在运行游戏的这台电脑上操作。</small>
     <form id="reset-password-form">
       <label>家长手机号<input required name="phone" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="请输入注册手机号"></label>
@@ -1509,7 +1507,7 @@ function homeView() {
       <button data-action="mistakes"><span>📝</span><b>错词本</b><small>${Object.keys(p.mistakes).length} 个待复习</small></button>
     </div></section>
     <section class="home-section rewards"><h2>成长奖励</h2><div class="reward-grid">
-      ${p.pet.speciesId ? `<button class="pet-room-entry" data-action="pet-home">
+      ${p.pet.speciesId || p.pet.needsBreedSelection ? `<button class="pet-room-entry" data-action="pet-home">
         <span>🐾${petNeedsAttention(p) ? '<i class="pet-attention-dot" aria-label="小狗需要你的关注"></i>' : ''}</span>
         <b>宠物屋</b>
         <small>${p.pet.needsBreedSelection ? '重新选择并保留养成进度' : p.pet.onboardingStep === 'earn' ? '快去帮你的小狗赚金币' : p.pet.onboardingStep === 'buy' ? '去兑换一份小狗食物' : p.pet.onboardingStep === 'feed' ? '带着食物回宠物屋' : p.pet.lastFedDate !== shanghaiDateForUi() ? '今天还没有喂食' : '今天已经照顾好啦'}</small>

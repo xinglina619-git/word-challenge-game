@@ -192,9 +192,9 @@ try {
   $readme = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'README.md')
   Assert-True ($package.version -eq '0.4.0') 'Package version must be 0.4.0'
   Assert-Contains $package.scripts.test 'launcher_test.ps1' 'npm test must include the launcher test'
-  Assert-Contains $index '/app.js?v=22' 'app.js cache version must be updated'
-  Assert-Contains $index '/styles.css?v=23' 'styles.css cache version must be updated'
-  Assert-Contains $index '/pet-system.js?v=2' 'pet-system.js cache version must be updated'
+  Assert-Contains $index '/app.js?v=23' 'app.js cache version must be updated'
+  Assert-Contains $index '/styles.css?v=24' 'styles.css cache version must be updated'
+  Assert-Contains $index '/pet-system.js?v=3' 'pet-system.js cache version must be updated'
   Assert-Contains $index '/review-games.js?v=2' 'review-games.js cache version must be updated'
   Assert-Contains $readme (ConvertFrom-TestText '5ZCM5pe25Ye6546w6Iux5paH5LiO5Lit5paH') 'README must describe text-only mixed matching'
   Assert-True (-not $readme.Contains((ConvertFrom-TestText '5Lit5paHL+WbvueJhw=='))) 'README must not advertise match-three picture tiles'
