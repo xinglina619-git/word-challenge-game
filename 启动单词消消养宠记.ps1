@@ -19,7 +19,7 @@ function Stop-WordSpiritLaunch([string]$Code, [string]$Message) {
   if ($env:WORD_SPIRIT_BROWSER_DISABLED -ne '1') {
     try {
       Add-Type -AssemblyName PresentationFramework
-      $title = ConvertFrom-WordSpiritText '6K+N54G15pif55CD5ZCv5Yqo5aSx6LSl'
+      $title = ConvertFrom-WordSpiritText '5Y2V6K+N5raI5raI5YW75a6g6K6w5ZCv5Yqo5aSx6LSl'
       [Windows.MessageBox]::Show($Message, $title, 'OK', 'Error') | Out-Null
     } catch {}
   }
@@ -82,7 +82,7 @@ if (-not $nodePath) {
   if ($nodeCommand) { $nodePath = $nodeCommand.Source }
 }
 if (-not $nodePath -or -not (Test-Path -LiteralPath $nodePath -PathType Leaf)) {
-  $message = ConvertFrom-WordSpiritText '5pyq5om+5YiwIE5vZGUuanPvvIzml6Dms5XlkK/liqjjgIror43ngbXmmJ/nkIPjgIvjgILor7flhYjlronoo4UgTm9kZS5qc+OAgg=='
+  $message = ConvertFrom-WordSpiritText '5rKh5pyJ5om+5YiwIE5vZGUuanPvvIzml6Dms5XlkK/liqjjgIrljZXor43mtojmtojlhbvlrqDorrDjgIvjgILor7flhYjlronoo4UgTm9kZS5qc+OAgg=='
   Stop-WordSpiritLaunch 'WORD_SPIRIT_NODE_MISSING' $message
 }
 
@@ -94,7 +94,7 @@ if (Test-WordSpiritHealth) {
     Stop-WordSpiritLaunch 'WORD_SPIRIT_PORT_CONFLICT' ($template -f $port)
   }
   if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
-    $template = ConvertFrom-WordSpiritText '44CK6K+N54G15pif55CD44CL5pyN5Yqh5ZCv5Yqo5aSx6LSl44CC6K+35p+l55yL5pel5b+X77yaezB9'
+    $template = ConvertFrom-WordSpiritText '44CK5Y2V6K+N5raI5raI5YW75a6g6K6w44CL5pyN5Yqh5ZCv5Yqo5aSx6LSl44CC6K+35p+l55yL5pel5b+X77yaezB9'
     Stop-WordSpiritLaunch 'WORD_SPIRIT_SERVER_MISSING' ($template -f $outputDirectory)
   }
 
@@ -126,7 +126,7 @@ if (Test-WordSpiritHealth) {
       Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
     }
     $seconds = [Math]::Ceiling($timeoutMs / 1000)
-    $template = ConvertFrom-WordSpiritText '44CK6K+N54G15pif55CD44CL5ZCv5Yqo6LaF5pe277yI5pyA5aSa562J5b6FIHswfSDnp5LvvInjgILor7fmn6XnnIvml6Xlv5fvvJp7MX0='
+    $template = ConvertFrom-WordSpiritText '44CK5Y2V6K+N5raI5raI5YW75a6g6K6w44CL5ZCv5Yqo6LaF5pe277yI5pyA5aSa562J5b6FIHswfSDnp5LvvInjgILor7fmn6XnnIvml6Xlv5fvvJp7MX0='
     [Console]::Error.WriteLine("LOG_DIR=$outputDirectory")
     Stop-WordSpiritLaunch 'WORD_SPIRIT_START_TIMEOUT' ($template -f $seconds, $outputDirectory)
   }

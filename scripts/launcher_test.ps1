@@ -1,9 +1,10 @@
-param([switch]$InvokeOnly)
+﻿param([switch]$InvokeOnly)
 
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$launcher = (Get-ChildItem -LiteralPath $root -Filter '*.ps1' -File | Select-Object -First 1).FullName
+$newLauncher = Join-Path $root '启动单词消消养宠记.ps1'
+$oldLauncher = Join-Path $root '启动词灵星球.ps1'
 $fixture = Join-Path $root 'scripts\launcher_fixture_server.js'
 $processHelper = Join-Path $root 'scripts\launcher_process_helper.js'
 $testScript = $MyInvocation.MyCommand.Path
@@ -16,6 +17,10 @@ $duplicatePathEnvironment = @([Environment]::GetEnvironmentVariables('Process').
 function Assert-True([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
 }
+
+Assert-True (Test-Path -LiteralPath $newLauncher -PathType Leaf) 'New launcher must exist'
+Assert-True (-not (Test-Path -LiteralPath $oldLauncher)) 'Legacy launcher must not exist'
+$launcher = $newLauncher
 
 function Assert-Contains([string]$Actual, [string]$Expected, [string]$Message) {
   if (-not $Actual.Contains($Expected)) { throw "$Message`nActual output: $Actual" }
@@ -172,7 +177,11 @@ try {
   }) 'missing-node'
   Assert-True ($missingNode.ExitCode -ne 0) 'Missing Node must fail'
   Assert-Contains $missingNode.Output 'WORD_SPIRIT_NODE_MISSING' 'Missing Node marker is missing'
-  Assert-Contains $missingNode.Output (ConvertFrom-TestText '5pyq5om+5YiwIE5vZGUuanM=') 'Missing Node must include a Chinese explanation'
+  Assert-Contains $missingNode.Output (ConvertFrom-TestText '5rKh5pyJ5om+5YiwIE5vZGUuanM=') 'Missing Node must include a Chinese explanation'
+  $newVisibleName = ConvertFrom-TestText '5Y2V6K+N5raI5raI5YW75a6g6K6w'
+  $oldVisibleName = ConvertFrom-TestText '6K+N54G15pif55CD'
+  Assert-Contains $missingNode.Output $newVisibleName 'Missing Node error must use the new game name'
+  Assert-True (-not $missingNode.Output.Contains($oldVisibleName)) 'Missing Node error must not expose the legacy name'
 
   $timeout = Invoke-Launcher ($common + @{
     WORD_SPIRIT_LAUNCH_PORT = [string](Get-FreePort)
@@ -186,6 +195,8 @@ try {
   Assert-Contains $timeout.Output 'LOG_DIR=' 'Startup timeout must provide the log directory'
   Assert-Contains $timeout.Output (ConvertFrom-TestText '5ZCv5Yqo6LaF5pe2') 'Startup timeout must include a Chinese explanation'
   Assert-Contains $timeout.Output (ConvertFrom-TestText '5pel5b+X') 'Startup timeout must mention logs in Chinese'
+  Assert-Contains $timeout.Output $newVisibleName 'Timeout error must use the new game name'
+  Assert-True (-not $timeout.Output.Contains($oldVisibleName)) 'Timeout error must not expose the legacy name'
 
   $package = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'package.json') | ConvertFrom-Json
   $index = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'index.html')
@@ -200,6 +211,8 @@ try {
   Assert-True (-not $readme.Contains((ConvertFrom-TestText '5Lit5paHL+WbvueJhw=='))) 'README must not advertise match-three picture tiles'
   Assert-Contains $readme 'http://127.0.0.1:31876' 'README must document the dedicated desktop URL'
   Assert-Contains $readme (ConvertFrom-TestText '5rOo5YaM5oiQ5Yqf5ZCO6K+36L+U5Zue55m75b2V') 'README must explain that registration returns to login'
+  Assert-Contains $readme '启动单词消消养宠记.ps1' 'README must document the new launcher filename'
+  Assert-True (-not $readme.Contains('启动词灵星球.ps1')) 'README must not document the legacy launcher filename'
 
   $duplicatePathResult = if ($duplicatePathEnvironment) { 'PASS' } else { 'SKIP' }
   Write-Output "LAUNCHER=PASS reuse=PASS start=PASS mismatch=PASS node-missing=PASS timeout=PASS browser-disabled=PASS duplicate-path=$duplicatePathResult"
