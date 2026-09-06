@@ -127,6 +127,7 @@ const state = {
   selectedPetId: '',
   petNameDraft: null,
   lastPetQuote: '',
+  lastPetSceneQuotes: {},
   showTrickBook: false,
   activeTrickId: '',
   trickTimer: null
@@ -428,7 +429,15 @@ function dogFigure(className = '', dog, pose = 'stand', trick = null) {
   if (!dog) return '<span class="dog-figure dog-fallback" role="img" aria-label="小狗">🐾</span>';
   const safePose = ['stand', 'paw', 'walk', 'sleep'].includes(pose) ? pose : 'stand';
   const trickClass = trick ? ` trick-${trick.animation} effect-${trick.effect}` : '';
-  return `<span class="dog-figure pose-${safePose}${trickClass} ${className}" style="--dog-sheet:url('${dog.asset}')" role="img" aria-label="${esc(dog.species)}"></span>`;
+  return `<span class="dog-figure pose-${safePose}${trickClass} ${className}" style="--dog-sheet:url('${dog.asset}')" role="img" aria-label="${esc(dog.species)}"><span class="dog-fallback" aria-hidden="true">🐾</span><img class="dog-asset-probe" src="${esc(dog.asset)}" alt="" aria-hidden="true"></span>`;
+}
+function handleDogAssetEvent(event) {
+  if (!event.target?.matches?.('.dog-asset-probe')) return;
+  const figure = event.target.closest('.dog-figure');
+  if (!figure) return;
+  const loaded = event.type === 'load';
+  figure.classList.toggle('asset-loaded', loaded);
+  figure.classList.toggle('asset-error', !loaded);
 }
 function mascotFigure(className = '') {
   return `<span class="spirit-figure unique-spirit ${className}" style="--spirit-image:url('${NEUTRAL_MASCOT.asset}')" role="img" aria-label="${NEUTRAL_MASCOT.species}"></span>`;
@@ -438,7 +447,8 @@ function petSpeech(scene) {
   if (!state.user) return '';
   const pet = normalizedProgress().pet;
   if (!pet.speciesId) return '';
-  const quote = PetSystem.quoteFor(pet.speciesId, scene, state.lastPetQuote);
+  const quote = PetSystem.quoteFor(pet.speciesId, scene, state.lastPetSceneQuotes[scene] || '');
+  state.lastPetSceneQuotes[scene] = quote;
   state.lastPetQuote = quote;
   return quote;
 }
@@ -471,6 +481,7 @@ function resetPetAccountState() {
   state.selectedPetId = '';
   state.petNameDraft = null;
   state.lastPetQuote = '';
+  state.lastPetSceneQuotes = {};
 }
 function petGrowthPercent(pet) {
   if (pet.level >= 10) return 100;
@@ -532,7 +543,7 @@ function modeForLevel(level) {
 function missionForLevel(level) {
   if (level % 10 === 0) return { type: 'boss', name: '错词Boss战', icon: '👾', bonus: '击败Boss，错词强化训练' };
   if (level % 5 === 0) return { type: 'treasure', name: '星愿宝箱关', icon: '🎁', bonus: '通关额外获得学习金币' };
-  return { type: 'normal', name: modeForLevel(level) === 'match3' ? '单词三消战' : '中英配对战', icon: modeForLevel(level) === 'match3' ? '💥' : '🔗', bonus: '完成挑战，积累词灵成长能量' };
+  return { type: 'normal', name: modeForLevel(level) === 'match3' ? '单词三消战' : '中英配对战', icon: modeForLevel(level) === 'match3' ? '💥' : '🔗', bonus: '完成挑战，获得学习金币' };
 }
 function makePairs(words) {
   return shuffle(words.flatMap((word, type) => [
@@ -1675,10 +1686,11 @@ function petOnboardingCard(progress) {
 function trickBookView(progress) {
   const pet = progress.pet;
   const next = PetSystem.nextTrickForLevel(pet.level);
+  const trickBusy = Boolean(state.activeTrickId);
   return `<section class="trick-book" aria-label="小狗特技成长册"><div class="trick-book-head"><div><small>成长期待</small><h2>小狗特技成长册</h2></div><button data-action="close-tricks" aria-label="关闭特技成长册">×</button></div><div class="trick-grid">${PetSystem.TRICKS.map(trick => {
     const unlocked = trick.level <= pet.level;
     const isNext = next?.id === trick.id;
-    return `<article class="trick-card ${unlocked ? 'unlocked' : 'locked'} ${isNext ? 'next' : ''}"><span>${unlocked ? '✨' : '🔒'}</span><b>${trick.name}</b><small>Lv.${trick.level} ${unlocked ? '已解锁' : isNext ? `还差 ${PetSystem.growthRemaining(pet.growth)} 成长值` : '等待解锁'}</small>${unlocked ? `<button data-action="perform-trick" data-trick-id="${trick.id}">表演一下</button>` : ''}</article>`;
+    return `<article class="trick-card ${unlocked ? 'unlocked' : 'locked'} ${isNext ? 'next' : ''}"><span>${unlocked ? '✨' : '🔒'}</span><b>${trick.name}</b><small>Lv.${trick.level} ${unlocked ? '已解锁' : isNext ? `还差 ${PetSystem.growthRemaining(pet.growth)} 成长值` : '等待解锁'}</small>${unlocked ? `<button data-action="perform-trick" data-trick-id="${trick.id}"${trickBusy ? ' disabled aria-disabled="true"' : ''}>表演一下</button>` : ''}</article>`;
   }).join('')}</div></section>`;
 }
 function petHomeView() {
@@ -1696,7 +1708,7 @@ function petHomeView() {
         ${state.lastPetQuote ? `<div class="dog-speech-bubble" role="status"><b>${esc(p.pet.name)}说</b><p>${esc(state.lastPetQuote)}</p></div>` : ''}
         <button class="pet-room-figure" data-action="pet-tap">${dogFigure('home-dog', dog, pose, activeTrick)}<span>轻轻摸摸我</span></button>
       </div>
-      <div class="pet-room-info"><small>${esc(dog.species)} · ${esc(dog.personality)} · ${growthName(p.pet.level)}</small><h1>${esc(p.pet.name)} · Lv.${p.pet.level}</h1>
+      <div class="pet-room-info"><small>${esc(dog.species)} · ${esc(dog.personality)} · ${growthName(p.pet.level)}</small><h1>${esc(p.pet.name)} · Lv.${p.pet.level}</h1><span>累计成长值 ${p.pet.growth}</span>
         <i class="pet-growth-bar"><em style="width:${petGrowthPercent(p.pet)}%"></em></i><b>${p.pet.level >= 10 ? '已达到最高等级' : `还差 ${remaining} 成长值升级`}</b>
         <button data-action="show-tricks">${p.pet.level >= 10 ? '查看全部特技' : `查看下一级特技：${nextTrick.name}`}</button>
       </div>
@@ -1940,6 +1952,8 @@ async function loadUser() {
   render();
 }
 
+document.addEventListener('load', handleDogAssetEvent, true);
+document.addEventListener('error', handleDogAssetEvent, true);
 document.addEventListener('pointerdown', () => startMusic());
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) pauseFallingTimer();
